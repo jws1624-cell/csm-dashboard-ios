@@ -3,21 +3,20 @@
 console.log('🔵 sidepanel.js 로드됨 - 버전: 2026-10-14-v8-auto');
 
 // 페이지 로드 시 자동으로 세션 상태 확인
-setTimeout(() => {
+setTimeout(async () => {
   console.log('[CSM] 자동 세션 체크 시작');
-  browserAPI.runtime.sendMessage({ type: 'ITSM_QUERY', path: '/api/now/ui/user/current_user' }, (resp) => {
-    if (!resp || !resp.ok) {
-      const err = resp?.error || '';
-      if (err.includes('ITSM 세션') || err.includes('Safari에서') || err.includes('세션 확보')) {
-        console.log('[CSM] ⚠️ 세션 없음 감지 - 자동 재연결 시작');
-        document.body.insertAdjacentHTML('afterbegin', '<div style="position:fixed;top:0;left:0;right:0;background:#ff9800;color:#fff;padding:8px;text-align:center;z-index:99999">🔄 ITSM 세션 자동 연결 중...</div>');
-      } else {
-        console.log('[CSM] ✅ 세션 정상');
-      }
+  try {
+    await itsmFetch('/api/now/ui/user/current_user');
+    console.log('[CSM] ✅ 세션 정상');
+  } catch (err) {
+    const errMsg = err.message || '';
+    if (errMsg.includes('ITSM 세션') || errMsg.includes('Safari에서') || errMsg.includes('세션 확보')) {
+      console.log('[CSM] ⚠️ 세션 없음 감지 - 자동 재연결 시작');
+      document.body.insertAdjacentHTML('afterbegin', '<div style="position:fixed;top:0;left:0;right:0;background:#ff9800;color:#fff;padding:8px;text-align:center;z-index:99999">🔄 ITSM 세션 자동 연결 중...</div>');
     } else {
       console.log('[CSM] ✅ 세션 정상');
     }
-  });
+  }
 }, 2000);
 
 // Safari Extension 호환성 레이어
@@ -1169,9 +1168,7 @@ async function renderAccountList(crmIds) {
     try {
       const path = `/api/now/table/customer_account?sysparm_query=u_sap_crm_bp_number=${encodeURIComponent(a.crmId)}&sysparm_fields=name&sysparm_limit=1&sysparm_exclude_reference_link=true`;
       const resp = await new Promise((resolve, reject) => {
-        browserAPI.runtime.sendMessage({ type: 'ITSM_QUERY', path }, r => {
-          if (r?.ok) resolve(r.data); else reject();
-        });
+        itsmFetch(path).then(resolve).catch(reject);
       });
       a.name = resp?.result?.[0]?.name || null;
     } catch { /* 무시 */ }
@@ -1595,12 +1592,7 @@ async function doSearch(crmIds, overrideAccountName) {
   await Promise.all(targets.map(async t => {
     try {
       const path = `/api/now/table/customer_account?sysparm_query=u_sap_crm_bp_number=${encodeURIComponent(t.crmId)}&sysparm_fields=name,number&sysparm_limit=1&sysparm_exclude_reference_link=true`;
-      const resp = await new Promise((resolve, reject) => {
-        browserAPI.runtime.sendMessage({ type: 'ITSM_QUERY', path }, r => {
-          if (r?.ok) resolve(r.data);
-          else reject(new Error(r?.error || ''));
-        });
-      });
+      const resp = await itsmFetch(path);
       const row = resp?.result?.[0];
       if (row) {
         if (!t.name) t.name = row.name || null;
@@ -1729,12 +1721,10 @@ function showError(msg, detail) {
     el.innerHTML = `<div class="error-title">🔄 ITSM 세션 재연결 중...</div>`;
     showView('error');
 
-    // background 세션 무효화
-    browserAPI.runtime.sendMessage({ type: 'INVALIDATE_SESSION' }, () => {
-      // iframe 재시작
-      window.retriggerSso((success) => {
-        if (success) {
-          console.log('[CSM] ✅ 재연결 성공 - 자동 재시도');
+    // iframe 재시작 (background 없음)
+    window.retriggerSso((success) => {
+      if (success) {
+        console.log('[CSM] ✅ 재연결 성공 - 자동 재시도');
           setTimeout(() => {
             if (_lastQuery) {
               doSearchOrCase(_lastQuery);
@@ -1748,7 +1738,6 @@ function showError(msg, detail) {
             + `<pre class="error-detail">Safari에서 itsm.services.sap를 직접 열어 로그인하세요</pre>`
             + `<button class="btn-ghost btn-sm" onclick="location.reload()" style="margin-top:8px">다시 시도</button>`;
         }
-      });
     });
     return;
   }
@@ -2106,25 +2095,26 @@ async function loadAttachments(sysId) {
 }
 
 async function uploadAttachment(sysId, file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const base64 = reader.result.split(',')[1];
-      browserAPI.runtime.sendMessage({
-        type: 'ITSM_UPLOAD',
-        sysId,
-        fileName: file.name,
-        contentType: file.type || 'application/octet-stream',
-        base64
-      }, resp => {
-        if (browserAPI.runtime.lastError) return reject(new Error(browserAPI.runtime.lastError.message));
-        if (!resp?.ok) return reject(new Error(resp?.error || t('uploadFailed')));
-        resolve(resp);
-      });
-    };
-    reader.onerror = () => reject(new Error(t('fileReadFailed')));
-    reader.readAsDataURL(file);
+  const gck = await getGck();
+  const form = new FormData();
+  form.append('table_name', 'sn_customerservice_case');
+  form.append('table_sys_id', sysId);
+  form.append('uploadFile', file, file.name);
+
+  const r = await fetch(`${ITSM_BASE}/api/now/attachment/upload`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { Accept: 'application/json', 'X-UserToken': gck },
+    body: form
   });
+
+  if (r.status === 401) throw new Error('ITSM 세션 만료');
+  if (!r.ok) {
+    const txt = await r.text().catch(() => '');
+    throw new Error(`업로드 ${r.status}: ${txt.slice(0, 200)}`);
+  }
+
+  return r.json();
 }
 
 // ── AI Insight ────────────────────────────────────────────────────────
@@ -2676,22 +2666,116 @@ async function submitMcc(c, backdrop) {
     involvedParties: document.getElementById('mccParties').value
   };
 
-  // background로 MCC 제출 요청
+  // MCC 제출 (직접 POST)
   console.log('[CSM] MCC 제출 요청 - accountSysId:', c.account_sys_id, 'caseSysId:', c.sys_id);
-  browserAPI.runtime.sendMessage({
-    type: 'MCC_SUBMIT',
-    caseSysId: c.sys_id,
-    caseNumber: c.number,
-    fields,
-    speedup,
-    veryHigh,
-    assignProcessor,
-    accountSysId: c.account_sys_id,
-    priority: c.priority
-  }, resp => {
-    if (resp?.ok) {
+
+  (async () => {
+    try {
+      // accountSysId가 없으면 조회
+      let accSysId = c.account_sys_id;
+      if (!accSysId) {
+        try {
+          const r = await itsmFetch(
+            `/api/now/table/sn_customerservice_case?sysparm_query=number=${encodeURIComponent(c.number)}&sysparm_fields=account&sysparm_limit=1&sysparm_display_value=false`
+          );
+          const link = r?.result?.[0]?.account?.link || '';
+          accSysId = link.split('/').pop() || '';
+        } catch (e) {
+          console.warn('[CSM] accountSysId 조회 실패 (계속 진행):', e.message);
+        }
+      }
+
+      // MCC 검증
+      try {
+        const gck = await getGck();
+        const qs = new URLSearchParams({
+          sysparm_processor: 'SAP_MCC_SOS_RP_Utils',
+          sysparm_scope: 'x_sapda_mccsos_app',
+          sysparm_name: 'validateFormOnSubmission',
+          sysparm_account_id: accSysId || '',
+          sysparm_escalation_type: 'CIM_TBE_Request',
+          sysparm_u_escalation_solution_area: '1',
+          sysparm_case: c.sys_id,
+          sysparm_cases: '',
+          sysparm_is_this_a_business_down_situation: 'false',
+          sysparm_exclude_reference_link: 'true'
+        });
+        await fetch(`${ITSM_BASE}/xmlhttp.do?${qs}`, {
+          credentials: 'include',
+          headers: { Accept: 'application/json', 'X-UserToken': gck }
+        });
+      } catch (e) {
+        console.warn('[CSM] MCC 검증 실패 (계속 진행):', e.message);
+      }
+
+      // MCC 제출
+      const itemGuid = crypto.randomUUID();
+      const casePriority = (c.priority || '3').toString().charAt(0);
+      const body = {
+        sysparm_item_guid: itemGuid,
+        variables: {
+          u_escalation_type: 'CIM_TBE_Request',
+          case_s: c.sys_id,
+          u_customer_3: accSysId || '',
+          case_priority: casePriority,
+          u_escalation_solution_area: '1',
+          speed_up: speedup ? 'true' : 'false',
+          assign_processor: assignProcessor ? 'true' : 'false',
+          raise_priority_to_very_high: veryHigh ? 'true' : 'false',
+          is_this_a_business_down_situation: 'false',
+          expected_action: 'false',
+          role_allowed: 'Yes',
+          type_helper: '',
+          case_list: '',
+          request_description: '',
+          for_more_information: '<p></p>\n<p></p>',
+          affected_business_solution_and_system_landscape_of_customer: '',
+          u_install_base_items: '',
+          u_go_live_date: '',
+          u_planned_close_date: '',
+          u_planned_service_start_date: '',
+          license_contract_subscription_volume_per_year: '',
+          request_title: fields.title,
+          business_impact: fields.businessImpact,
+          affected_business_process: fields.affectedProcess,
+          how_they_are_affected: fields.howAffected,
+          upcoming: fields.dueDates,
+          strategic_involvement: fields.strategicInvolvement,
+          already_involved_parties: fields.involvedParties,
+        },
+        get_portal_messages: 'true',
+        sysparm_no_validation: 'true',
+        engagement_channel: 'sp',
+        referrer: null
+      };
+
+      const gck = await getGck();
+      const r = await fetch(`${ITSM_BASE}/api/sn_sc/v1/servicecatalog/items/${MCC_CATALOG_SYS_ID}/submit_producer`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          'X-UserToken': gck,
+          'X-Transaction-Source': `Interface=Web,Interface-Name=MCCSOS,Interface-Type=Service Portal,Interface-SysID=${MCC_PORTAL_ID}`
+        },
+        body: JSON.stringify(body)
+      });
+
+      if (r.status === 401) throw new Error('ITSM 세션 만료');
+      if (!r.ok) {
+        const txt = await r.text().catch(() => '');
+        throw new Error(`MCC 제출 ${r.status}: ${txt.slice(0, 200)}`);
+      }
+
+      const result = await r.json();
+      const ritm = result?.result?.number || result?.result?.sys_id || '';
+      if (!ritm || ritm === '-1') {
+        throw new Error(`MCC 제출 응답에 유효한 RITM 번호 없음`);
+      }
+
+      // 성공 처리
       if (selectedCase && selectedCase.sys_id === c.sys_id) selectedCase.mcc_escalated = true;
-      // 케이스 항목에 MCC 뱃지 추가
       const item = document.querySelector(`.case-item[data-sysid="${c.sys_id}"]`);
       if (item && !item.querySelector('.mcc-badge')) {
         const badges = item.querySelector('.case-badges');
@@ -2701,13 +2785,15 @@ async function submitMcc(c, backdrop) {
         badges.insertBefore(badge, badges.querySelector('.watch-btn'));
       }
       backdrop.remove();
-      alert(`${t('mccSuccess')}: ${resp.ritm || ''}`);
-    } else {
+      alert(`${t('mccSuccess')}: ${ritm}`);
+
+    } catch (e) {
+      console.error('[CSM] MCC 제출 실패:', e);
       btn.disabled = false;
       btn.textContent = t('mccSubmit');
-      alert(t('mccFailed') + ': ' + (resp?.error || t('mccUnknownError')));
+      alert(t('mccFailed') + ': ' + e.message);
     }
-  });
+  })();
 }
 
 // ── 자동완성 ─────────────────────────────────────────────────────────
@@ -2761,10 +2847,7 @@ async function handleAccountInput(e) {
       try {
         const path = `/api/now/table/customer_account?sysparm_query=nameCONTAINS${encodeURIComponent(q)}^ORDERBYDESCu_sap_crm_bp_number&sysparm_fields=name,number,u_sap_crm_bp_number&sysparm_exclude_reference_link=true`;
         const resp = await new Promise((resolve, reject) => {
-          browserAPI.runtime.sendMessage({ type: 'ITSM_QUERY', path }, r => {
-            if (r?.ok) resolve(r.data);
-            else reject(new Error(r?.error || 'ITSM 오류'));
-          });
+          itsmFetch(path).then(resolve).catch(reject);
         });
         if (document.getElementById('accountInput').value.trim() !== q) return;
         const results = (resp?.result || [])
@@ -3509,10 +3592,7 @@ async function doAccSearch(q, owner, searchInput, resultsEl, onSelect) {
       : `nameCONTAINS${encodeURIComponent(q)}`;
     const path = `/api/now/table/customer_account?sysparm_query=${query}^ORDERBYDESCu_sap_crm_bp_number&sysparm_fields=name,number,u_sap_crm_bp_number&sysparm_exclude_reference_link=true&sysparm_limit=10`;
     const resp = await new Promise((resolve, reject) => {
-      browserAPI.runtime.sendMessage({ type: 'ITSM_QUERY', path }, r => {
-        if (r?.ok) resolve(r.data);
-        else reject(new Error(r?.error || 'ITSM 오류'));
-      });
+      itsmFetch(path).then(resolve).catch(reject);
     });
     if (searchInput.value.trim() !== q) return; // stale
     const results = (resp?.result || [])
