@@ -105,8 +105,18 @@
     }
   }
 
-  // 초기화: iframe이 자동으로 SSO 처리 - 아무것도 안 함
+  // 초기화: iframe이 자동으로 SSO 처리
   console.log('[init] SSO iframe이 백그라운드에서 세션 획득 중...');
   _ssoInProgress = true;
+
+  // 30초 타임아웃 - 세션 획득 실패 시 자동 재시도
+  setTimeout(() => {
+    if (_ssoInProgress) {
+      console.log('[init] ⏰ 30초 타임아웃 - iframe 재시작');
+      window.retriggerSso(() => {
+        console.log('[init] 타임아웃 후 재시도 완료');
+      });
+    }
+  }, 30000);
 
 })();

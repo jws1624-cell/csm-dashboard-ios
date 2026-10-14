@@ -1,5 +1,7 @@
 'use strict';
 
+console.log('🔵 sidepanel.js 로드됨 - 버전: 2026-10-14-v7-showError');
+
 // Safari Extension 호환성 레이어
 const browserAPI = typeof browser !== 'undefined' ? browser : chrome;
 
@@ -746,10 +748,19 @@ let _reconnecting = null; // 재연결 중인 Promise (중복 재연결 방지)
 function itsmFetch(path, _retried = false) {
   console.log('[CSM] itsmFetch →', path.slice(0, 100), '_retried=', _retried);
 
-  // Safari Extension은 Promise 방식 선호
-  return browserAPI.runtime.sendMessage({ type: 'ITSM_QUERY', path })
-    .then(resp => {
-      console.log('[CSM] itsmFetch 응답 받음:', { resp });
+  // Promise 래핑 (Safari Extension 호환성)
+  return new Promise((resolve, reject) => {
+    browserAPI.runtime.sendMessage({ type: 'ITSM_QUERY', path }, (resp) => {
+      console.log('[CSM] itsmFetch 응답 받음:', { resp, lastError: browserAPI.runtime.lastError });
+
+      if (browserAPI.runtime.lastError) {
+        return reject(new Error(browserAPI.runtime.lastError.message));
+      }
+
+      resolve(resp);
+    });
+  }).then(resp => {
+      console.log('[CSM] itsmFetch then:', { resp });
 
       if (!resp || !resp.ok) {
         const err = resp?.error || 'ITSM 오류';
@@ -1727,27 +1738,55 @@ async function applyComponentFilter() {
 function showError(msg, detail) {
   const el = document.getElementById('errorState');
 
-  // 디버그: 에러 메시지 전체를 화면에 표시
-  const debugInfo = `에러 메시지: "${detail}"<br>세션 에러 감지: ${
-    detail && (detail.includes('ITSM 세션') || detail.includes('g_ck') || detail.includes('401')
-      || detail.includes('세션 없음') || detail.includes('로그인') || detail.includes('SSO')
-      || detail.includes('Safari에서') || detail.includes('세션 만료'))
-  }<br>retriggerSso 존재: ${typeof window.retriggerSso === 'function'}`;
+  // 세션 에러 자동 감지 및 재연결
+  const isSessionError = detail && (
+    detail.includes('ITSM 세션') || detail.includes('g_ck') || detail.includes('401')
+    || detail.includes('세션 없음') || detail.includes('로그인') || detail.includes('SSO')
+    || detail.includes('Safari에서') || detail.includes('세션 만료') || detail.includes('세션 확보')
+  );
 
+  if (isSessionError && typeof window.retriggerSso === 'function') {
+    console.log('[CSM] showError에서 세션 만료 감지 - 자동 재연결 시작');
+    el.innerHTML = `<div class="error-title">🔄 ITSM 세션 재연결 중...</div>`;
+    showView('error');
+
+    // background 세션 무효화
+    browserAPI.runtime.sendMessage({ type: 'INVALIDATE_SESSION' }, () => {
+      // iframe 재시작
+      window.retriggerSso((success) => {
+        if (success) {
+          console.log('[CSM] ✅ 재연결 성공 - 자동 재시도');
+          setTimeout(() => {
+            if (_lastQuery) {
+              doSearchOrCase(_lastQuery);
+            } else {
+              location.reload();
+            }
+          }, 1000);
+        } else {
+          console.error('[CSM] ❌ 재연결 실패');
+          el.innerHTML = `<div class="error-title">⚠️ 재연결 실패</div>`
+            + `<pre class="error-detail">Safari에서 itsm.services.sap를 직접 열어 로그인하세요</pre>`
+            + `<button class="btn-ghost btn-sm" onclick="location.reload()" style="margin-top:8px">다시 시도</button>`;
+        }
+      });
+    });
+    return;
+  }
+
+  // 일반 에러 표시
   el.innerHTML = `<div class="error-title">⚠️ ${escHtml(msg)}</div>`
     + (detail ? `<pre class="error-detail">${escHtml(detail)}</pre>` : '')
-    + `<div style="font-size:11px;color:#666;margin-top:8px;text-align:left;padding:8px;background:#f5f5f5;border-radius:4px">${debugInfo}</div>`
     + `<button class="btn-ghost btn-sm" id="btnRetry" style="margin-top:8px">${t('retry')}</button>`;
   showView('error');
   console.error('[CSM]', msg, detail || '');
 
-  // 재시도 버튼 이벤트 (마지막 쿼리 재실행)
+  // 재시도 버튼
   setTimeout(() => {
     const btn = document.getElementById('btnRetry');
     if (btn) {
       btn.onclick = () => {
         if (_lastQuery) {
-          console.log('[CSM] 재시도 - 마지막 쿼리:', _lastQuery);
           doSearchOrCase(_lastQuery);
         } else {
           location.reload();
