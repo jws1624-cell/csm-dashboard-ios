@@ -292,6 +292,16 @@ browserAPI.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return false;
   }
 
+  // sidepanel에서 세션 무효화 요청 (재인증 트리거)
+  if (msg.type === 'INVALIDATE_SESSION') {
+    tlog('[INVALIDATE_SESSION] g_ck 캐시 무효화');
+    _gck = null;
+    _gckExpiry = 0;
+    _bootstrapping = null;
+    sendResponse({ ok: true });
+    return false;
+  }
+
   if (msg.type === 'ITSM_QUERY') {
     const { path } = msg;
     const patchIdx = path.indexOf('__PATCH__');

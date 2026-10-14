@@ -763,16 +763,24 @@ function itsmFetch(path, _retried = false) {
           // 로딩 표시
           setProgress('🔄 ITSM 세션 재연결 중…');
 
-          window.retriggerSso((success) => {
-            if (success) {
-              console.log('[CSM] ✅ 재연결 성공 - 조회 재시도');
-              // 재연결 성공 → 원래 요청 재시도
-              itsmFetch(path, true).then(resolve).catch(reject);
-            } else {
-              console.error('[CSM] ❌ 재연결 실패');
-              setProgress('');
-              reject(new Error(err));
-            }
+          // background.js의 g_ck 캐시 무효화
+          browserAPI.runtime.sendMessage({ type: 'INVALIDATE_SESSION' }, () => {
+            console.log('[CSM] background 세션 무효화 완료');
+
+            // iframe SSO 재실행
+            window.retriggerSso((success) => {
+              if (success) {
+                console.log('[CSM] ✅ 재연결 성공 - 조회 재시도');
+                // 약간의 딜레이 후 재시도 (background가 새 g_ck를 받을 시간)
+                setTimeout(() => {
+                  itsmFetch(path, true).then(resolve).catch(reject);
+                }, 500);
+              } else {
+                console.error('[CSM] ❌ 재연결 실패');
+                setProgress('');
+                reject(new Error(err));
+              }
+            });
           });
         } else {
           return reject(new Error(err));

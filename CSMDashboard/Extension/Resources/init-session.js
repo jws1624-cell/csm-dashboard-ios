@@ -12,10 +12,23 @@
     _reconnectCallback = callback;
     _ssoInProgress = true;
 
-    // iframe을 다시 로드하여 SSO 재실행
+    // iframe을 완전히 다시 로드하여 SSO 재실행
     const iframe = document.getElementById('sso-iframe');
     if (iframe) {
-      iframe.src = iframe.src; // 리로드
+      const originalSrc = iframe.src;
+      iframe.src = 'about:blank'; // 먼저 비우고
+      setTimeout(() => {
+        iframe.src = originalSrc; // 다시 로드
+        console.log('[init] iframe 재로드 완료');
+      }, 100);
+    } else {
+      console.error('[init] ❌ sso-iframe을 찾을 수 없음');
+      _ssoInProgress = false;
+      if (_reconnectCallback) {
+        const cb = _reconnectCallback;
+        _reconnectCallback = null;
+        cb(false);
+      }
     }
   };
 
