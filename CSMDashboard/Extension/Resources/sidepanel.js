@@ -741,15 +741,16 @@ function extractNoteLinks(rawJournal) {
 }
 
 // ── ITSM 통신 (background로 위임, 세션 만료 시 자동 재연결) ──────────
+let _reconnecting = null; // 재연결 중인 Promise (중복 재연결 방지)
+
 function itsmFetch(path, _retried = false) {
-  return new Promise((resolve, reject) => {
-    console.log('[CSM] itsmFetch →', path.slice(0, 100));
-    browserAPI.runtime.sendMessage({ type: 'ITSM_QUERY', path }, (resp) => {
-      if (browserAPI.runtime.lastError) {
-        const err = browserAPI.runtime.lastError.message;
-        console.error('[CSM] sendMessage 실패:', err);
-        return reject(new Error('Extension 통신 오류: ' + err));
-      }
+  console.log('[CSM] itsmFetch →', path.slice(0, 100), '_retried=', _retried);
+
+  // Safari Extension은 Promise 방식 선호
+  return browserAPI.runtime.sendMessage({ type: 'ITSM_QUERY', path })
+    .then(resp => {
+      console.log('[CSM] itsmFetch 응답 받음:', { resp });
+
       if (!resp || !resp.ok) {
         const err = resp?.error || 'ITSM 오류';
         console.error('[CSM] ITSM 응답 실패:', err);
@@ -759,39 +760,64 @@ function itsmFetch(path, _retried = false) {
           || err.includes('세션 없음') || err.includes('로그인') || err.includes('SSO')
           || err.includes('Safari에서') || err.includes('세션 만료');
 
+        // 디버그: 에러 메시지를 화면에 표시
+        console.log('[CSM] 에러 상세:', { err, isSessionError, _retried, hasRetrigger: typeof window.retriggerSso });
+
         if (isSessionError && !_retried && typeof window.retriggerSso === 'function') {
           console.log('[CSM] 🔄 세션 만료 감지 - 자동 재연결 시작');
 
-          // 로딩 표시
+          // 이미 재연결 중이면 기다림
+          if (_reconnecting) {
+            console.log('[CSM] 이미 재연결 중 - 대기');
+            return _reconnecting.then(() => {
+              console.log('[CSM] 재연결 완료 대기 후 재시도');
+              return new Promise(r => setTimeout(r, 200)).then(() => itsmFetch(path, true));
+            });
+          }
+
+          // 화면에도 표시
           setProgress('🔄 ITSM 세션 재연결 중…');
 
-          // background.js의 g_ck 캐시 무효화
-          browserAPI.runtime.sendMessage({ type: 'INVALIDATE_SESSION' }, () => {
-            console.log('[CSM] background 세션 무효화 완료');
+          // 재연결 Promise 생성
+          _reconnecting = new Promise((resolveReconnect, rejectReconnect) => {
+            // background.js의 g_ck 캐시 무효화
+            browserAPI.runtime.sendMessage({ type: 'INVALIDATE_SESSION' }).then(() => {
+              console.log('[CSM] background 세션 무효화 완료');
 
-            // iframe SSO 재실행
-            window.retriggerSso((success) => {
-              if (success) {
-                console.log('[CSM] ✅ 재연결 성공 - 조회 재시도');
-                // 약간의 딜레이 후 재시도 (background가 새 g_ck를 받을 시간)
-                setTimeout(() => {
-                  itsmFetch(path, true).then(resolve).catch(reject);
-                }, 500);
-              } else {
-                console.error('[CSM] ❌ 재연결 실패');
-                setProgress('');
-                reject(new Error(err));
-              }
+              // iframe SSO 재실행
+              window.retriggerSso((success) => {
+                _reconnecting = null; // 완료
+                if (success) {
+                  console.log('[CSM] ✅ 재연결 성공');
+                  resolveReconnect();
+                } else {
+                  console.error('[CSM] ❌ 재연결 실패');
+                  setProgress('');
+                  rejectReconnect();
+                }
+              });
             });
           });
+
+          // 재연결 후 재시도
+          return _reconnecting.then(() => {
+            return new Promise(r => setTimeout(r, 500)).then(() => itsmFetch(path, true));
+          });
+
         } else {
-          return reject(new Error(err));
+          throw new Error(err);
         }
       } else {
-        resolve(resp.data);
+        return resp.data;
       }
+    })
+    .catch(e => {
+      // sendMessage 자체가 실패한 경우
+      if (e.message && e.message.includes('Extension')) {
+        console.error('[CSM] sendMessage 실패:', e.message);
+      }
+      throw e;
     });
-  });
 }
 
 // ── 내 계정 정보 ─────────────────────────────────────────────────────
@@ -1650,8 +1676,17 @@ async function applyComponentFilter() {
 
 function showError(msg, detail) {
   const el = document.getElementById('errorState');
+
+  // 디버그: 에러 메시지 전체를 화면에 표시
+  const debugInfo = `에러 메시지: "${detail}"<br>세션 에러 감지: ${
+    detail && (detail.includes('ITSM 세션') || detail.includes('g_ck') || detail.includes('401')
+      || detail.includes('세션 없음') || detail.includes('로그인') || detail.includes('SSO')
+      || detail.includes('Safari에서') || detail.includes('세션 만료'))
+  }<br>retriggerSso 존재: ${typeof window.retriggerSso === 'function'}`;
+
   el.innerHTML = `<div class="error-title">⚠️ ${escHtml(msg)}</div>`
     + (detail ? `<pre class="error-detail">${escHtml(detail)}</pre>` : '')
+    + `<div style="font-size:11px;color:#666;margin-top:8px;text-align:left;padding:8px;background:#f5f5f5;border-radius:4px">${debugInfo}</div>`
     + `<button class="btn-ghost btn-sm" id="btnRetry" style="margin-top:8px">${t('retry')}</button>`;
   showView('error');
   console.error('[CSM]', msg, detail || '');
