@@ -4,6 +4,20 @@
 
   const browserAPI = typeof browser !== 'undefined' ? browser : chrome;
   let _ssoInProgress = false;
+  let _reconnectCallback = null;
+
+  // 전역 함수로 재연결 요청 노출
+  window.retriggerSso = function(callback) {
+    console.log('[init] 🔄 SSO 재연결 요청');
+    _reconnectCallback = callback;
+    _ssoInProgress = true;
+
+    // iframe을 다시 로드하여 SSO 재실행
+    const iframe = document.getElementById('sso-iframe');
+    if (iframe) {
+      iframe.src = iframe.src; // 리로드
+    }
+  };
 
   // iframe에서 SSO 결과 수신
   window.addEventListener('message', (event) => {
@@ -17,13 +31,32 @@
         gck: event.data.gck
       }).then(() => {
         console.log('[init] g_ck를 background에 전달 완료 - API 호출 준비됨');
+
+        // 재연결 콜백이 있으면 실행
+        if (_reconnectCallback) {
+          const cb = _reconnectCallback;
+          _reconnectCallback = null;
+          cb(true);
+        }
       }).catch(e => {
         console.error('[init] g_ck 전달 실패:', e);
+        if (_reconnectCallback) {
+          const cb = _reconnectCallback;
+          _reconnectCallback = null;
+          cb(false);
+        }
       });
 
     } else if (event.data.type === 'SSO_FAILED') {
       console.error('[init] ❌ SSO 실패:', event.data.error);
       _ssoInProgress = false;
+
+      // 재연결 콜백이 있으면 실행
+      if (_reconnectCallback) {
+        const cb = _reconnectCallback;
+        _reconnectCallback = null;
+        cb(false);
+      }
 
       // 실패 시에만 경고 표시 (iframe이 자동으로 재시도하므로 30초 후)
       setTimeout(() => {

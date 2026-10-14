@@ -492,6 +492,7 @@ let myUserName = null;     // 표시용
 let myEmail = null;        // watch_list 등록용
 let _lastTargets = null;    // 마지막 조회 타겟([{crmId,name}]) — status 필터 변경 시 재조회용
 let _rawCases = [];         // 컴포넌트 필터 적용 전 원본 케이스 — comp 필터 변경 시 클라 재필터용
+let _lastQuery = null;      // 마지막 검색 쿼리 — 재시도용
 let _lastAiInsight = null;  // 마지막 AI 구조화 결과(전체 복사용)
 let _lastAiLang = null;     // _lastAiInsight를 생성한 언어 — 언어 변경 시 재실행 판단용
 let _memoType = 'internal'; // 'internal' | 'external'
@@ -739,8 +740,8 @@ function extractNoteLinks(rawJournal) {
   return out;
 }
 
-// ── ITSM 통신 (background로 위임) ───────────────────────────────────
-function itsmFetch(path) {
+// ── ITSM 통신 (background로 위임, 세션 만료 시 자동 재연결) ──────────
+function itsmFetch(path, _retried = false) {
   return new Promise((resolve, reject) => {
     console.log('[CSM] itsmFetch →', path.slice(0, 100));
     browserAPI.runtime.sendMessage({ type: 'ITSM_QUERY', path }, (resp) => {
@@ -752,9 +753,33 @@ function itsmFetch(path) {
       if (!resp || !resp.ok) {
         const err = resp?.error || 'ITSM 오류';
         console.error('[CSM] ITSM 응답 실패:', err);
-        return reject(new Error(err));
+
+        // 세션 만료 에러 감지 (background.js에서 "ITSM 세션" 메시지 포함)
+        const isSessionError = err.includes('ITSM 세션') || err.includes('g_ck') || err.includes('401');
+
+        if (isSessionError && !_retried && typeof window.retriggerSso === 'function') {
+          console.log('[CSM] 🔄 세션 만료 감지 - 자동 재연결 시작');
+
+          // 로딩 표시
+          setProgress('🔄 ITSM 세션 재연결 중…');
+
+          window.retriggerSso((success) => {
+            if (success) {
+              console.log('[CSM] ✅ 재연결 성공 - 조회 재시도');
+              // 재연결 성공 → 원래 요청 재시도
+              itsmFetch(path, true).then(resolve).catch(reject);
+            } else {
+              console.error('[CSM] ❌ 재연결 실패');
+              setProgress('');
+              reject(new Error(err));
+            }
+          });
+        } else {
+          return reject(new Error(err));
+        }
+      } else {
+        resolve(resp.data);
       }
-      resolve(resp.data);
     });
   });
 }
@@ -1379,7 +1404,10 @@ function renderUnified(accountHits, caseHits, q) {
   });
 }
 
-async function doSearchOrCase(q) { return searchUnified(q); }
+async function doSearchOrCase(q) {
+  _lastQuery = q; // 재시도를 위해 저장
+  return searchUnified(q);
+}
 
 
 // CS번호 / 케이스번호 직접 조회 → 케이스 목록 + 클릭 가능
@@ -1614,9 +1642,24 @@ function showError(msg, detail) {
   const el = document.getElementById('errorState');
   el.innerHTML = `<div class="error-title">⚠️ ${escHtml(msg)}</div>`
     + (detail ? `<pre class="error-detail">${escHtml(detail)}</pre>` : '')
-    + `<button class="btn-ghost btn-sm" style="margin-top:8px" onclick="location.reload()">${t('retry')}</button>`;
+    + `<button class="btn-ghost btn-sm" id="btnRetry" style="margin-top:8px">${t('retry')}</button>`;
   showView('error');
   console.error('[CSM]', msg, detail || '');
+
+  // 재시도 버튼 이벤트 (마지막 쿼리 재실행)
+  setTimeout(() => {
+    const btn = document.getElementById('btnRetry');
+    if (btn) {
+      btn.onclick = () => {
+        if (_lastQuery) {
+          console.log('[CSM] 재시도 - 마지막 쿼리:', _lastQuery);
+          doSearchOrCase(_lastQuery);
+        } else {
+          location.reload();
+        }
+      };
+    }
+  }, 0);
 }
 
 function setProgress(msg) {
