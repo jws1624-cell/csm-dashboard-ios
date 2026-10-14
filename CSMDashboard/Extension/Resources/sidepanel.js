@@ -755,7 +755,9 @@ function itsmFetch(path, _retried = false) {
         console.error('[CSM] ITSM 응답 실패:', err);
 
         // 세션 만료 에러 감지 (background.js에서 "ITSM 세션" 메시지 포함)
-        const isSessionError = err.includes('ITSM 세션') || err.includes('g_ck') || err.includes('401');
+        const isSessionError = err.includes('ITSM 세션') || err.includes('g_ck') || err.includes('401')
+          || err.includes('세션 없음') || err.includes('로그인') || err.includes('SSO')
+          || err.includes('Safari에서') || err.includes('세션 만료');
 
         if (isSessionError && !_retried && typeof window.retriggerSso === 'function') {
           console.log('[CSM] 🔄 세션 만료 감지 - 자동 재연결 시작');
