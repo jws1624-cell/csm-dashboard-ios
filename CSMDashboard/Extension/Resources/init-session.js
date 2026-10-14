@@ -1,119 +1,87 @@
-// iOS Safari Extension 세션 초기화 헬퍼
+// iOS Safari Extension 세션 초기화 헬퍼 (iframe 없이 직접 fetch)
 (function() {
   'use strict';
 
-  const browserAPI = typeof browser !== 'undefined' ? browser : chrome;
-  let _ssoInProgress = false;
-  let _reconnectCallback = null;
-
-  // g_ck를 전역으로 저장 (background.js 없이 직접 사용)
+  // g_ck를 전역으로 저장
   window._gck = null;
   window._gckExpiry = 0;
 
-  // 전역 함수로 재연결 요청 노출
-  window.retriggerSso = function(callback) {
-    console.log('[init] 🔄 SSO 재연결 요청');
-    _reconnectCallback = callback;
-    _ssoInProgress = true;
+  const browserAPI = typeof browser !== 'undefined' ? browser : chrome;
 
-    // iframe을 직접 reload
-    const iframe = document.getElementById('sso-iframe');
-    if (iframe) {
-      console.log('[init] iframe.contentWindow.location.reload()');
-      try {
-        iframe.contentWindow.location.reload();
-      } catch (e) {
-        console.log('[init] reload 실패, src 재설정:', e.message);
-        const originalSrc = iframe.src;
-        iframe.src = originalSrc + '?t=' + Date.now();
+  // SSO 실행 (Safari의 실제 쿠키 사용)
+  async function fetchGck() {
+    console.log('[init] ITSM 세션 확인 시작 (Safari 쿠키 사용)');
+
+    // 먼저 Safari의 ITSM 쿠키 확인
+    try {
+      const cookies = await browserAPI.cookies.getAll({ domain: '.services.sap' });
+      console.log('[init] Safari 쿠키 개수:', cookies.length);
+
+      // JSESSIONID 또는 관련 쿠키 확인
+      const sessionCookie = cookies.find(c => c.name.includes('JSESSIONID') || c.name.includes('session'));
+      if (sessionCookie) {
+        console.log('[init] Safari 세션 쿠키 발견:', sessionCookie.name);
       }
-      console.log('[init] iframe 재로드 완료');
-    } else {
-      console.error('[init] ❌ sso-iframe을 찾을 수 없음');
-      _ssoInProgress = false;
-      if (_reconnectCallback) {
-        const cb = _reconnectCallback;
-        _reconnectCallback = null;
-        cb(false);
-      }
+    } catch (e) {
+      console.log('[init] 쿠키 조회 실패:', e);
     }
-  };
 
-  // iframe에서 SSO 결과 수신
-  window.addEventListener('message', (event) => {
-    if (event.data.type === 'SSO_SUCCESS') {
-      console.log('[init] ✅ SSO 성공 - g_ck 획득:', event.data.gck.slice(0, 8) + '...');
-      _ssoInProgress = false;
+    try {
+      const response = await fetch('https://itsm.services.sap/login.do', {
+        credentials: 'include',
+        redirect: 'follow'
+      });
 
-      // g_ck를 전역 변수에 저장 (background.js 없음)
-      window._gck = event.data.gck;
-      window._gckExpiry = Date.now() + 15 * 60 * 1000;
-      console.log('[init] g_ck 저장 완료 - API 호출 준비됨');
+      const html = await response.text();
+      const match = html.match(/g_ck\s*=\s*['"]([^'"]+)['"]/);
 
-      // 재연결 콜백이 있으면 실행
-      if (_reconnectCallback) {
-        const cb = _reconnectCallback;
-        _reconnectCallback = null;
-        cb(true);
+      if (match) {
+        window._gck = match[1];
+        window._gckExpiry = Date.now() + 15 * 60 * 1000;
+        console.log('[init] ✅ g_ck 획득 성공:', window._gck.slice(0, 8) + '...');
+        return true;
+      } else {
+        console.log('[init] ⚠️ g_ck 추출 실패 - 로그인 필요할 수 있음');
+        return false;
       }
-
-    } else if (event.data.type === 'SSO_FAILED') {
-      console.error('[init] ❌ SSO 실패:', event.data.error);
-      _ssoInProgress = false;
-
-      // 재연결 콜백이 있으면 실행
-      if (_reconnectCallback) {
-        const cb = _reconnectCallback;
-        _reconnectCallback = null;
-        cb(false);
-      }
-
-      // 실패 시에만 경고 표시 (iframe이 자동으로 재시도하므로 30초 후)
-      setTimeout(() => {
-        if (!_ssoInProgress) {
-          showSessionError(event.data.error);
-        }
-      }, 30000);
-    }
-  });
-
-  function showSessionError(error) {
-    let banner = document.getElementById('session-error-banner');
-    if (!banner) {
-      banner = document.createElement('div');
-      banner.id = 'session-error-banner';
-      banner.style.cssText = `
-        position: fixed;
-        top: 0;
-        left: 0;
-        right: 0;
-        background: #f44336;
-        color: #fff;
-        padding: 12px;
-        text-align: center;
-        z-index: 9999;
-        font-size: 14px;
-      `;
-      banner.innerHTML = `
-        ⚠️ 자동 로그인 실패 - Safari에서 itsm.services.sap를 열어 수동 로그인하세요
-        <button onclick="this.parentElement.remove(); location.reload();" style="margin-left: 12px; padding: 4px 12px; background: #fff; color: #000; border: none; border-radius: 4px; cursor: pointer;">재시도</button>
-      `;
-      document.body.prepend(banner);
+    } catch (e) {
+      console.error('[init] ❌ fetch 오류:', e);
+      return false;
     }
   }
 
-  // 초기화: iframe이 자동으로 SSO 처리
-  console.log('[init] SSO iframe이 백그라운드에서 세션 획득 중...');
-  _ssoInProgress = true;
+  // 전역 함수로 재연결 요청 노출 - Safari 탭을 ITSM으로 리다이렉트
+  window.retriggerSso = async function(callback) {
+    console.log('[init] 🔄 SSO 재연결 요청 - Safari를 ITSM으로 리다이렉트');
 
-  // 30초 타임아웃 - 세션 획득 실패 시 자동 재시도
-  setTimeout(() => {
-    if (_ssoInProgress) {
-      console.log('[init] ⏰ 30초 타임아웃 - iframe 재시작');
-      window.retriggerSso(() => {
-        console.log('[init] 타임아웃 후 재시도 완료');
-      });
+    try {
+      // 현재 탭을 ITSM으로 리다이렉트
+      const tabs = await browserAPI.tabs.query({ active: true, currentWindow: true });
+      if (tabs.length > 0) {
+        const tab = tabs[0];
+        console.log('[init] 현재 탭을 ITSM으로 리다이렉트:', tab.url);
+
+        // ITSM으로 이동 (SSO가 제대로 동작하는 URL)
+        await browserAPI.tabs.update(tab.id, { url: 'https://itsm.services.sap/now/cwf/agent/home/list' });
+
+        // 3초 대기 후 g_ck 재시도
+        setTimeout(async () => {
+          console.log('[init] SSO 완료 대기 후 g_ck 재획득');
+          const success = await fetchGck();
+          console.log('[init] g_ck 재획득 결과:', success);
+          if (callback) callback(success);
+        }, 3000);
+      } else {
+        console.error('[init] 활성 탭을 찾을 수 없음');
+        if (callback) callback(false);
+      }
+    } catch (e) {
+      console.error('[init] 탭 리다이렉트 실패:', e);
+      if (callback) callback(false);
     }
-  }, 30000);
+  };
+
+  // 페이지 로드 시 자동 실행
+  fetchGck();
 
 })();
