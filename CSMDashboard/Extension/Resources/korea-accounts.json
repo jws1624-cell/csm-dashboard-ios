@@ -1,0 +1,1438 @@
+{
+  "_meta": {
+    "description": "한국 고객사 CRM ID 목록 (ONE360 기준). 신규 고객 추가 시 직접 편집.",
+    "totalCount": 357,
+    "updatedAt": "2026-09-05",
+    "source": "고객사.xlsx (Downloads)"
+  },
+  "accounts": [
+    {
+      "crmId": "0000160755",
+      "name": "Samsung SDS Co., Ltd."
+    },
+    {
+      "crmId": "0000163611",
+      "name": "Samsung Electronics Co., Ltd."
+    },
+    {
+      "crmId": "0000164813",
+      "name": "Samsung Electro-Mechanics Co., Ltd."
+    },
+    {
+      "crmId": "0000205962",
+      "name": "Deloitte Consulting LLC."
+    },
+    {
+      "crmId": "0000207184",
+      "name": "CJ CheilJedang Corporation"
+    },
+    {
+      "crmId": "0000956308",
+      "name": "Handok Inc."
+    },
+    {
+      "crmId": "0001099120",
+      "name": "Hyundai Motor Company"
+    },
+    {
+      "crmId": "0001111210",
+      "name": "LG CNS Co., Ltd."
+    },
+    {
+      "crmId": "0001111784",
+      "name": "Samsung C&T Corporation"
+    },
+    {
+      "crmId": "0001115428",
+      "name": "SK HYNIX INC."
+    },
+    {
+      "crmId": "0001117701",
+      "name": "LG UPlus Corp."
+    },
+    {
+      "crmId": "0001118974",
+      "name": "GS Caltex Corporation"
+    },
+    {
+      "crmId": "0001119108",
+      "name": "HYOSUNG TNS INC"
+    },
+    {
+      "crmId": "0001119130",
+      "name": "Daesang Corp"
+    },
+    {
+      "crmId": "0001128327",
+      "name": "SK Telecom Co., Ltd."
+    },
+    {
+      "crmId": "0001129882",
+      "name": "Infolink Inc."
+    },
+    {
+      "crmId": "0001132265",
+      "name": "Hanwha Ocean co., Ltd."
+    },
+    {
+      "crmId": "0001132266",
+      "name": "LS Cable & System Ltd."
+    },
+    {
+      "crmId": "0001132804",
+      "name": "BizTech i Co., Ltd."
+    },
+    {
+      "crmId": "0001135783",
+      "name": "SK Networks Co., Ltd."
+    },
+    {
+      "crmId": "0001140190",
+      "name": "Shinsegae International"
+    },
+    {
+      "crmId": "0001140221",
+      "name": "Hanon Systems Co., Ltd."
+    },
+    {
+      "crmId": "0001140223",
+      "name": "KEB Hana Bank"
+    },
+    {
+      "crmId": "0001140227",
+      "name": "Kumho Petrochemical Co., Ltd."
+    },
+    {
+      "crmId": "0001142067",
+      "name": "AmorePacific Corporation"
+    },
+    {
+      "crmId": "0001143788",
+      "name": "KB Kookmin Bank"
+    },
+    {
+      "crmId": "0001145051",
+      "name": "SKC Co.,Ltd."
+    },
+    {
+      "crmId": "0001145101",
+      "name": "Hyundai Engineering Co., Ltd."
+    },
+    {
+      "crmId": "0001160926",
+      "name": "SK Inc."
+    },
+    {
+      "crmId": "0001165964",
+      "name": "HYUNDAI MOBIS CORP."
+    },
+    {
+      "crmId": "0001170172",
+      "name": "HD Hyundai Oilbank Co., Ltd"
+    },
+    {
+      "crmId": "0001170176",
+      "name": "SK Innovation E&S"
+    },
+    {
+      "crmId": "0001170178",
+      "name": "Orion Corporation"
+    },
+    {
+      "crmId": "0001176657",
+      "name": "SK intellix Company Limited"
+    },
+    {
+      "crmId": "0001187154",
+      "name": "Namhae Chemical Corp."
+    },
+    {
+      "crmId": "0001189061",
+      "name": "SAMYANG Foods Inc."
+    },
+    {
+      "crmId": "0001189063",
+      "name": "Yuhan Corporation"
+    },
+    {
+      "crmId": "0001190200",
+      "name": "KOREA CIRCUIT CO.,LTD."
+    },
+    {
+      "crmId": "0001191823",
+      "name": "GS Retail Co., Ltd"
+    },
+    {
+      "crmId": "0001191964",
+      "name": "SK ecoplant CO. LTD."
+    },
+    {
+      "crmId": "0001204702",
+      "name": "Paris Croissant Co., Ltd."
+    },
+    {
+      "crmId": "0001206726",
+      "name": "Toray Advanced Materials Korea Inc."
+    },
+    {
+      "crmId": "0001206798",
+      "name": "Hyundai Steel Company"
+    },
+    {
+      "crmId": "0001206800",
+      "name": "Kia Corporation"
+    },
+    {
+      "crmId": "0001206815",
+      "name": "DL Motors"
+    },
+    {
+      "crmId": "0001211360",
+      "name": "Korea Gas Corporation"
+    },
+    {
+      "crmId": "0001211506",
+      "name": "Nexen Tire Corp."
+    },
+    {
+      "crmId": "0001211933",
+      "name": "Hanwha Systems Co., Ltd"
+    },
+    {
+      "crmId": "0001216079",
+      "name": "BSG Partners Co., Ltd."
+    },
+    {
+      "crmId": "0001217306",
+      "name": "LOTTE CHEMICAL CORPORATION"
+    },
+    {
+      "crmId": "0001219179",
+      "name": "LG Electronics Inc."
+    },
+    {
+      "crmId": "0001221532",
+      "name": "YESCO Co., Ltd."
+    },
+    {
+      "crmId": "0001222237",
+      "name": "LX MMA Corporation"
+    },
+    {
+      "crmId": "0001223883",
+      "name": "Maeil Holdings Co., Ltd."
+    },
+    {
+      "crmId": "0001224407",
+      "name": "S-1 CORPORATION"
+    },
+    {
+      "crmId": "0001224751",
+      "name": "SK Siltron Co.,Ltd."
+    },
+    {
+      "crmId": "0001225642",
+      "name": "GC Biopharma Corp."
+    },
+    {
+      "crmId": "0001225680",
+      "name": "Hansol Paper Co., Ltd."
+    },
+    {
+      "crmId": "0001225681",
+      "name": "KT&G CORPORATION"
+    },
+    {
+      "crmId": "0001225682",
+      "name": "Otoki Corp."
+    },
+    {
+      "crmId": "0001225693",
+      "name": "E1 Corporation"
+    },
+    {
+      "crmId": "0001227086",
+      "name": "Doosan Corp."
+    },
+    {
+      "crmId": "0001227087",
+      "name": "GS E&C"
+    },
+    {
+      "crmId": "0001227124",
+      "name": "GS Global Corp"
+    },
+    {
+      "crmId": "0001227776",
+      "name": "SK GAS LTD"
+    },
+    {
+      "crmId": "0001228368",
+      "name": "ISU Systems Co., Ltd."
+    },
+    {
+      "crmId": "0001229255",
+      "name": "Kukdo Chemical Co., Ltd."
+    },
+    {
+      "crmId": "0001231502",
+      "name": "Miracom, Inc."
+    },
+    {
+      "crmId": "0001232487",
+      "name": "Hyundai Corporation"
+    },
+    {
+      "crmId": "0001233326",
+      "name": "LG H&H Co., Ltd."
+    },
+    {
+      "crmId": "0001234020",
+      "name": "LG Innotek Co., Ltd."
+    },
+    {
+      "crmId": "0001235589",
+      "name": "DONGWON F&B CO., LTD."
+    },
+    {
+      "crmId": "0001239357",
+      "name": "Kyungdong City Gas Co., Ltd."
+    },
+    {
+      "crmId": "0001239384",
+      "name": "Changshin INC."
+    },
+    {
+      "crmId": "0001240521",
+      "name": "Yeochun NCC Co., Ltd."
+    },
+    {
+      "crmId": "0001240524",
+      "name": "Kolon Corporation Co., Ltd."
+    },
+    {
+      "crmId": "0001240528",
+      "name": "HL Mando Corporation"
+    },
+    {
+      "crmId": "0001240822",
+      "name": "Unid Co., Ltd."
+    },
+    {
+      "crmId": "0001241420",
+      "name": "Korea Ginseng Corporation"
+    },
+    {
+      "crmId": "0001243420",
+      "name": "Samchully Co., Ltd."
+    },
+    {
+      "crmId": "0001246058",
+      "name": "Hyundai Autoever Corp."
+    },
+    {
+      "crmId": "0001248747",
+      "name": "Kyungdong Navien Co., Ltd."
+    },
+    {
+      "crmId": "0001249478",
+      "name": "HD Hyundai Infracore Co., Ltd."
+    },
+    {
+      "crmId": "0001251239",
+      "name": "HANJIN Logistics Corporation"
+    },
+    {
+      "crmId": "0001251242",
+      "name": "SeAH Steel Corporation"
+    },
+    {
+      "crmId": "0001253275",
+      "name": "MC DONALDS KOREA INC."
+    },
+    {
+      "crmId": "0001253276",
+      "name": "Coway Co., Ltd."
+    },
+    {
+      "crmId": "0001253294",
+      "name": "NONGSHIM TAEKYUNG CO., LTD."
+    },
+    {
+      "crmId": "0001943721",
+      "name": "LG Chem Ltd"
+    },
+    {
+      "crmId": "0002060440",
+      "name": "Seoul Metropolitan Government"
+    },
+    {
+      "crmId": "0002082079",
+      "name": "Hyundai Glovis Co, Ltd."
+    },
+    {
+      "crmId": "0002088260",
+      "name": "DONGWON INDUSTRIES CO., LTD."
+    },
+    {
+      "crmId": "0002130487",
+      "name": "Dfocus Co., Ltd."
+    },
+    {
+      "crmId": "0002532164",
+      "name": "Hyundai WIA Corp."
+    },
+    {
+      "crmId": "0003090042",
+      "name": "Hansol PNS Inc. IT service Dept."
+    },
+    {
+      "crmId": "0003180466",
+      "name": "ASPN CO.,LTD."
+    },
+    {
+      "crmId": "0003212824",
+      "name": "GS EPS Co.,LTD"
+    },
+    {
+      "crmId": "0003496939",
+      "name": "Shinsegae I&C Inc."
+    },
+    {
+      "crmId": "0003515212",
+      "name": "Kumho Tire Co., Inc."
+    },
+    {
+      "crmId": "0003580305",
+      "name": "GSITM Co., Ltd."
+    },
+    {
+      "crmId": "0003686238",
+      "name": "Sogang University"
+    },
+    {
+      "crmId": "0003853802",
+      "name": "Daehan Steel Co., Ltd."
+    },
+    {
+      "crmId": "0003998193",
+      "name": "DONGKUK SYSTEMS CO. ,Ltd."
+    },
+    {
+      "crmId": "0004208660",
+      "name": "LX INTERNATIONAL CORP."
+    },
+    {
+      "crmId": "0004586303",
+      "name": "Korloy Inc."
+    },
+    {
+      "crmId": "0004608662",
+      "name": "Green Cross Holdings Corporation"
+    },
+    {
+      "crmId": "0004959902",
+      "name": "OSSTEM IMPLANT Co., Ltd."
+    },
+    {
+      "crmId": "0005134237",
+      "name": "AhnLab, Inc."
+    },
+    {
+      "crmId": "0005926082",
+      "name": "WOOJIN Industry Systems"
+    },
+    {
+      "crmId": "0006171146",
+      "name": "Daehan Oil Pipeline Corporation"
+    },
+    {
+      "crmId": "0006406546",
+      "name": "Woongjin Co., Ltd."
+    },
+    {
+      "crmId": "0006847207",
+      "name": "Doosan Corporation Digital Innovation BU"
+    },
+    {
+      "crmId": "0007083950",
+      "name": "CJ Foodville Corp."
+    },
+    {
+      "crmId": "0007159632",
+      "name": "SK C & C Co Ltd"
+    },
+    {
+      "crmId": "0007569607",
+      "name": "Metanet Global Co., Ltd."
+    },
+    {
+      "crmId": "0007616918",
+      "name": "S-Oil Corporation"
+    },
+    {
+      "crmId": "0007687857",
+      "name": "CANON KOREA INC."
+    },
+    {
+      "crmId": "0007913624",
+      "name": "Blueward INC."
+    },
+    {
+      "crmId": "0008332084",
+      "name": "Samick THK Co.,Ltd."
+    },
+    {
+      "crmId": "0008429173",
+      "name": "Ceragem co,.Ltd"
+    },
+    {
+      "crmId": "0009115450",
+      "name": "AHPRO Co., Ltd."
+    },
+    {
+      "crmId": "0009214942",
+      "name": "AKIS Co., Ltd."
+    },
+    {
+      "crmId": "0009553938",
+      "name": "PricewaterhouseCoopers Consulting"
+    },
+    {
+      "crmId": "0009968077",
+      "name": "GOLFZON CO.,LTD."
+    },
+    {
+      "crmId": "0010090324",
+      "name": "KTDS"
+    },
+    {
+      "crmId": "0010132124",
+      "name": "Telechips Inc."
+    },
+    {
+      "crmId": "0010385927",
+      "name": "EY Consulting, LLC"
+    },
+    {
+      "crmId": "0010484885",
+      "name": "BEST MOBILITY CORE TECHNOLOGY CO., LTD"
+    },
+    {
+      "crmId": "0010559475",
+      "name": "CELLTRION INC."
+    },
+    {
+      "crmId": "0010609691",
+      "name": "PARNAS HOTEL CO.,LTD."
+    },
+    {
+      "crmId": "0011358574",
+      "name": "Hanwha Defense Systems Co Ltd"
+    },
+    {
+      "crmId": "0011884656",
+      "name": "Simpac Inc."
+    },
+    {
+      "crmId": "0012102104",
+      "name": "DREAM TECH CO.,LTD."
+    },
+    {
+      "crmId": "0012530883",
+      "name": "F&U CREDIT INFORMATION CO.,LTD."
+    },
+    {
+      "crmId": "0012626373",
+      "name": "DONGIN ENTECH CO.,LTD."
+    },
+    {
+      "crmId": "0012842218",
+      "name": "SAMSUNG BIOLOGICS"
+    },
+    {
+      "crmId": "0012893127",
+      "name": "Doosan Corp"
+    },
+    {
+      "crmId": "0013099780",
+      "name": "F&F Holdings Co., Ltd."
+    },
+    {
+      "crmId": "0013305297",
+      "name": "Kyung-in Synthetic Corporation"
+    },
+    {
+      "crmId": "0013391342",
+      "name": "EMART Inc."
+    },
+    {
+      "crmId": "0013620480",
+      "name": "Business On Communication Co.,Ltd."
+    },
+    {
+      "crmId": "0013632816",
+      "name": "A-JIN INDUSTRY CO.,LTD."
+    },
+    {
+      "crmId": "0013792539",
+      "name": "CLK Corporation"
+    },
+    {
+      "crmId": "0013895561",
+      "name": "DONGWHA ENTERPRISE CO., LTD."
+    },
+    {
+      "crmId": "0014379470",
+      "name": "Kolon Benit"
+    },
+    {
+      "crmId": "0014381021",
+      "name": "Gmarket Inc."
+    },
+    {
+      "crmId": "0014381314",
+      "name": "Kolon Benit Co., Ltd."
+    },
+    {
+      "crmId": "0014381320",
+      "name": "WOOSUNG CO,LTD."
+    },
+    {
+      "crmId": "0014381372",
+      "name": "Daou Data Corp."
+    },
+    {
+      "crmId": "0014485076",
+      "name": "ZEN consulting Co., Ltd."
+    },
+    {
+      "crmId": "0014527887",
+      "name": "ARMIQ Co., Ltd."
+    },
+    {
+      "crmId": "0014544456",
+      "name": "E&S Global Co., Ltd."
+    },
+    {
+      "crmId": "0014709379",
+      "name": "UNIR"
+    },
+    {
+      "crmId": "0015054148",
+      "name": "CESCO CO.,LTD."
+    },
+    {
+      "crmId": "0015087694",
+      "name": "Dataworks, Inc."
+    },
+    {
+      "crmId": "0015103737",
+      "name": "Inspien Inc."
+    },
+    {
+      "crmId": "0015104504",
+      "name": "ATNS Group"
+    },
+    {
+      "crmId": "0015115083",
+      "name": "Coupang Corp."
+    },
+    {
+      "crmId": "0015434534",
+      "name": "Fisco&Bizpark Co.,Ltd."
+    },
+    {
+      "crmId": "0015466457",
+      "name": "NOA Advanced Technology Solutions"
+    },
+    {
+      "crmId": "0015484203",
+      "name": "LS MTRON CO., LTD."
+    },
+    {
+      "crmId": "0015484214",
+      "name": "DAEDONG CORPORATION"
+    },
+    {
+      "crmId": "0015658197",
+      "name": "GS Energy Corporation"
+    },
+    {
+      "crmId": "0015885153",
+      "name": "Finesoft Co., Ltd"
+    },
+    {
+      "crmId": "0016295733",
+      "name": "HANKUK CARBON CO.,LTD."
+    },
+    {
+      "crmId": "0016614368",
+      "name": "Sajo CPK Co., Ltd."
+    },
+    {
+      "crmId": "0017231114",
+      "name": "Kwang Dong Pharmaceutical Co.,Ltd."
+    },
+    {
+      "crmId": "0017410632",
+      "name": "THN CORPORATION"
+    },
+    {
+      "crmId": "0018635145",
+      "name": "ILJITECH Co., Ltd"
+    },
+    {
+      "crmId": "0019911636",
+      "name": "Netmarble Corp."
+    },
+    {
+      "crmId": "0020655078",
+      "name": "L & F CO.,LTD."
+    },
+    {
+      "crmId": "0020754775",
+      "name": "APPROTIUM CO., LTD"
+    },
+    {
+      "crmId": "0020864930",
+      "name": "ECOPRO CO.,LTD."
+    },
+    {
+      "crmId": "0021143736",
+      "name": "KOLMAR KOREA CO., LTD."
+    },
+    {
+      "crmId": "0021286666",
+      "name": "LX Semicon Co., Ltd."
+    },
+    {
+      "crmId": "0021618134",
+      "name": "LS Corp."
+    },
+    {
+      "crmId": "0021821254",
+      "name": "BODY FRIEND CO.,LTD."
+    },
+    {
+      "crmId": "0021844270",
+      "name": "DINE Inc"
+    },
+    {
+      "crmId": "0022171912",
+      "name": "Aju Steel Co.,Ltd"
+    },
+    {
+      "crmId": "0022269907",
+      "name": "HAESUNG DS CO.,LTD."
+    },
+    {
+      "crmId": "0022271754",
+      "name": "SEEGENE, INC."
+    },
+    {
+      "crmId": "0022600413",
+      "name": "YANOLJA CO.,LTD."
+    },
+    {
+      "crmId": "0022690788",
+      "name": "JOBKOREA LLC"
+    },
+    {
+      "crmId": "0023472044",
+      "name": "SOCAR Inc."
+    },
+    {
+      "crmId": "0024361831",
+      "name": "Hugel Inc."
+    },
+    {
+      "crmId": "0024871390",
+      "name": "SEAH BESTEEL HOLDINGS"
+    },
+    {
+      "crmId": "0024937747",
+      "name": "Doosan Fuel Cell Co., Ltd"
+    },
+    {
+      "crmId": "0025608517",
+      "name": "Gigalane Co.,Ltd"
+    },
+    {
+      "crmId": "0026525468",
+      "name": "PharmaResearch Co., Ltd."
+    },
+    {
+      "crmId": "0026525547",
+      "name": "Worldex Industry & Trading Co.,Ltd."
+    },
+    {
+      "crmId": "0026601490",
+      "name": "Yuhan Clorox Co.,Ltd."
+    },
+    {
+      "crmId": "0026603786",
+      "name": "DNF Co.,Ltd."
+    },
+    {
+      "crmId": "0026603845",
+      "name": "SM ENTERTAINMENT CO., Ltd."
+    },
+    {
+      "crmId": "0026619851",
+      "name": "LOTTE MCC CORPORATION"
+    },
+    {
+      "crmId": "0026619859",
+      "name": "JYP Entertainment Corporation"
+    },
+    {
+      "crmId": "0026620155",
+      "name": "WIA MAGNA POWERTRAIN CO.,LTD."
+    },
+    {
+      "crmId": "0026665554",
+      "name": "AJU PHARM CO.,LTD."
+    },
+    {
+      "crmId": "0027000115",
+      "name": "SOLUM CO.,LTD."
+    },
+    {
+      "crmId": "0027016542",
+      "name": "Kbank"
+    },
+    {
+      "crmId": "0027490007",
+      "name": "HELINOX INC."
+    },
+    {
+      "crmId": "0027490168",
+      "name": "ENCHEM CO.,LTD."
+    },
+    {
+      "crmId": "0027493420",
+      "name": "HYBE Co., Ltd."
+    },
+    {
+      "crmId": "0027495380",
+      "name": "GENSTARMATE INC"
+    },
+    {
+      "crmId": "0027495974",
+      "name": "MUSINSA CO., LTD."
+    },
+    {
+      "crmId": "0027496025",
+      "name": "HLI CO.,LTD."
+    },
+    {
+      "crmId": "0027504867",
+      "name": "Ray Co,,Ltd."
+    },
+    {
+      "crmId": "0027506418",
+      "name": "Soonchunhyang University"
+    },
+    {
+      "crmId": "0027506679",
+      "name": "The Nature Holdings Co.,Ltd."
+    },
+    {
+      "crmId": "0027765122",
+      "name": "VIC Global"
+    },
+    {
+      "crmId": "0027765267",
+      "name": "DNA Motors"
+    },
+    {
+      "crmId": "0028254783",
+      "name": "Hanmi Science Co., Ltd."
+    },
+    {
+      "crmId": "0028772162",
+      "name": "Harim Holdings Co., Ltd."
+    },
+    {
+      "crmId": "0029612970",
+      "name": "Grepp, Inc"
+    },
+    {
+      "crmId": "0030023147",
+      "name": "Doosan Robotics Inc."
+    },
+    {
+      "crmId": "0030166800",
+      "name": "NVH Korea Inc."
+    },
+    {
+      "crmId": "0030621275",
+      "name": "C & C International Corporation"
+    },
+    {
+      "crmId": "0030621277",
+      "name": "Readian Solution Co., Ltd."
+    },
+    {
+      "crmId": "0031529024",
+      "name": "Fastfive Co., Ltd."
+    },
+    {
+      "crmId": "0031748533",
+      "name": "FuriosaAI, Inc."
+    },
+    {
+      "crmId": "0032707710",
+      "name": "JSC Tech Co,. Ltd"
+    },
+    {
+      "crmId": "0033101575",
+      "name": "StradVision Inc."
+    },
+    {
+      "crmId": "0033458569",
+      "name": "42dot Inc."
+    },
+    {
+      "crmId": "0034669332",
+      "name": "PUcore co.,ltd."
+    },
+    {
+      "crmId": "0034671729",
+      "name": "SK bioscience Co., Ltd."
+    },
+    {
+      "crmId": "0034671737",
+      "name": "SK Stoa Co.,Ltd."
+    },
+    {
+      "crmId": "0034671739",
+      "name": "SK Plasma Co.,Ltd."
+    },
+    {
+      "crmId": "0034763178",
+      "name": "BizTech Partners Co., Ltd"
+    },
+    {
+      "crmId": "0034795345",
+      "name": "SFC Co., Ltd."
+    },
+    {
+      "crmId": "0035015692",
+      "name": "KAIST"
+    },
+    {
+      "crmId": "0035032175",
+      "name": "NVH Korea Inc."
+    },
+    {
+      "crmId": "0035568780",
+      "name": "PARUCNC"
+    },
+    {
+      "crmId": "0035921677",
+      "name": "skuldlabs"
+    },
+    {
+      "crmId": "0036006292",
+      "name": "SPTECH CO., LTD."
+    },
+    {
+      "crmId": "0036298135",
+      "name": "Semifive Inc."
+    },
+    {
+      "crmId": "0036342125",
+      "name": "Brackets"
+    },
+    {
+      "crmId": "0036345083",
+      "name": "Comforin Corp"
+    },
+    {
+      "crmId": "0036436286",
+      "name": "HL Holdings Corporation"
+    },
+    {
+      "crmId": "0036442361",
+      "name": "Noroo Holdings Co., Ltd."
+    },
+    {
+      "crmId": "0036500486",
+      "name": "GS ITM"
+    },
+    {
+      "crmId": "0036534940",
+      "name": "BSG Parthers"
+    },
+    {
+      "crmId": "0036568703",
+      "name": "Soft lab"
+    },
+    {
+      "crmId": "0036587215",
+      "name": "BEN consulting"
+    },
+    {
+      "crmId": "0036622643",
+      "name": "LG CNS"
+    },
+    {
+      "crmId": "0036723879",
+      "name": "sumacsae soft korea"
+    },
+    {
+      "crmId": "0036938448",
+      "name": "Yeonsinnae Rodeo Street"
+    },
+    {
+      "crmId": "0037420881",
+      "name": "Asicland Co.,Ltd"
+    },
+    {
+      "crmId": "0037465079",
+      "name": "EC Bank"
+    },
+    {
+      "crmId": "0037489750",
+      "name": "awgeaweg"
+    },
+    {
+      "crmId": "0037712376",
+      "name": "CFRONT"
+    },
+    {
+      "crmId": "0038000504",
+      "name": "Kia Corporation 2"
+    },
+    {
+      "crmId": "0038057790",
+      "name": "AIRS Medical Inc."
+    },
+    {
+      "crmId": "0038070282",
+      "name": "Techcross Environmental Servces Inc."
+    },
+    {
+      "crmId": "0038079025",
+      "name": "Hankook & Company Co., Ltd."
+    },
+    {
+      "crmId": "0038095475",
+      "name": "SKCC"
+    },
+    {
+      "crmId": "0038120930",
+      "name": "com4in"
+    },
+    {
+      "crmId": "0038240546",
+      "name": "finesoft"
+    },
+    {
+      "crmId": "0038356849",
+      "name": "Five Space Co Ltd"
+    },
+    {
+      "crmId": "0038398447",
+      "name": "Gas Entec Co.,Ltd."
+    },
+    {
+      "crmId": "0038705885",
+      "name": "ifiniq"
+    },
+    {
+      "crmId": "0038764289",
+      "name": "GrandeTree"
+    },
+    {
+      "crmId": "0038781778",
+      "name": "DK BMC"
+    },
+    {
+      "crmId": "0038799952",
+      "name": "Gcensoft"
+    },
+    {
+      "crmId": "0038830742",
+      "name": "infoRAD"
+    },
+    {
+      "crmId": "0038949752",
+      "name": "UD Impact Inc."
+    },
+    {
+      "crmId": "0038965016",
+      "name": "QuantumSurf Co., Ltd."
+    },
+    {
+      "crmId": "0039028276",
+      "name": "biznbank"
+    },
+    {
+      "crmId": "0039041050",
+      "name": "ncxtend"
+    },
+    {
+      "crmId": "0039150976",
+      "name": "INVISTEK"
+    },
+    {
+      "crmId": "0039197555",
+      "name": "JeinSoft"
+    },
+    {
+      "crmId": "0039474441",
+      "name": "Precursor Inc."
+    },
+    {
+      "crmId": "0039643651",
+      "name": "doranlab"
+    },
+    {
+      "crmId": "0039914373",
+      "name": "IntoAction"
+    },
+    {
+      "crmId": "0050000831",
+      "name": "ZIGBANG CO.,LTD."
+    },
+    {
+      "crmId": "0050006302",
+      "name": "SK RENT A CAR CO., LTD."
+    },
+    {
+      "crmId": "0050010386",
+      "name": "Smilegate Co.,Ltd."
+    },
+    {
+      "crmId": "0050011245",
+      "name": "Essencore limited"
+    },
+    {
+      "crmId": "0050019899",
+      "name": "Zinus Inc."
+    },
+    {
+      "crmId": "0050020104",
+      "name": "IICOMBINED CO.,LTD."
+    },
+    {
+      "crmId": "0050024724",
+      "name": "SK Biopharmaceuticals Co.,Ltd."
+    },
+    {
+      "crmId": "0050026696",
+      "name": "Youngone Holdings Co., Ltd"
+    },
+    {
+      "crmId": "0050031003",
+      "name": "Farm Hannong Co., Ltd"
+    },
+    {
+      "crmId": "0050041932",
+      "name": "Doosan Bobcat Inc."
+    },
+    {
+      "crmId": "0050046315",
+      "name": "HD Hyundai Co., Ltd."
+    },
+    {
+      "crmId": "0050064975",
+      "name": "Divers Korea Co., Ltd."
+    },
+    {
+      "crmId": "0050066767",
+      "name": "Lotte Wellfood Co., Ltd."
+    },
+    {
+      "crmId": "0050069374",
+      "name": "BXT Solution co.,Ltd"
+    },
+    {
+      "crmId": "0050076107",
+      "name": "KRAFTON, INC."
+    },
+    {
+      "crmId": "0050077276",
+      "name": "Boryung Consumer Healthcare Co., Ltd"
+    },
+    {
+      "crmId": "0050081222",
+      "name": "Medit Corp."
+    },
+    {
+      "crmId": "0050084109",
+      "name": "SK Nexilis"
+    },
+    {
+      "crmId": "0050099318",
+      "name": "MOTREX CO.,LTD."
+    },
+    {
+      "crmId": "0050110761",
+      "name": "Hyundai Transys"
+    },
+    {
+      "crmId": "0050116339",
+      "name": "Megazone Cloud Corporation"
+    },
+    {
+      "crmId": "0050120591",
+      "name": "AirFirst Co., Ltd."
+    },
+    {
+      "crmId": "0050125291",
+      "name": "SEPPIN Co., Ltd."
+    },
+    {
+      "crmId": "0050130816",
+      "name": "Beacon Korea Co., Ltd."
+    },
+    {
+      "crmId": "0050136081",
+      "name": "Solus Advanced Materials co., Ltd."
+    },
+    {
+      "crmId": "0050136697",
+      "name": "ACRAS&COMPANY INC."
+    },
+    {
+      "crmId": "0050142039",
+      "name": "Kakao Enterprise Corp"
+    },
+    {
+      "crmId": "0050155201",
+      "name": "SK Signet"
+    },
+    {
+      "crmId": "0050215846",
+      "name": "SK keyfoundry Inc."
+    },
+    {
+      "crmId": "0050229661",
+      "name": "HD Hyundai Robotics Co., Ltd."
+    },
+    {
+      "crmId": "0050233131",
+      "name": "DL Chemical Co. Ltd."
+    },
+    {
+      "crmId": "0050241753",
+      "name": "SkyHigh Memory Limited"
+    },
+    {
+      "crmId": "0050250686",
+      "name": "Bucketplace Co.,Ltd."
+    },
+    {
+      "crmId": "0050252108",
+      "name": "GENUONE Sciences Inc."
+    },
+    {
+      "crmId": "0050252316",
+      "name": "LG Energy Solution Ltd."
+    },
+    {
+      "crmId": "0050252647",
+      "name": "SK TNS Co.,Ltd."
+    },
+    {
+      "crmId": "0050269447",
+      "name": "Bukang Information System"
+    },
+    {
+      "crmId": "0050273510",
+      "name": "FI Lab"
+    },
+    {
+      "crmId": "0050274618",
+      "name": "TGsoft Co., Ltd."
+    },
+    {
+      "crmId": "0050291669",
+      "name": "Ably Corporation"
+    },
+    {
+      "crmId": "0050295189",
+      "name": "Dunamu Inc."
+    },
+    {
+      "crmId": "0050304190",
+      "name": "Bungaejangter Inc."
+    },
+    {
+      "crmId": "0050311876",
+      "name": "Softin co., Ltd"
+    },
+    {
+      "crmId": "0050333211",
+      "name": "JADEData Inc."
+    },
+    {
+      "crmId": "0050344893",
+      "name": "MCM Korea Inc."
+    },
+    {
+      "crmId": "0050359460",
+      "name": "Cornerstone Intelligence Inc."
+    },
+    {
+      "crmId": "0050365026",
+      "name": "Kakaopay Insurance Corp."
+    },
+    {
+      "crmId": "0050373144",
+      "name": "SK On Co., Ltd."
+    },
+    {
+      "crmId": "0050389721",
+      "name": "Hyundai Energy Solutions Co., Ltd."
+    },
+    {
+      "crmId": "0050390223",
+      "name": "OPTOLANE Technologies Inc."
+    },
+    {
+      "crmId": "0050396990",
+      "name": "Tmap Mobility Co., Ltd."
+    },
+    {
+      "crmId": "0050413069",
+      "name": "LOTTE BIOLOGICS Co., Ltd."
+    },
+    {
+      "crmId": "0050415189",
+      "name": "Ulsan GPS Corporation"
+    },
+    {
+      "crmId": "0050420986",
+      "name": "Air Zeta Co., Ltd."
+    },
+    {
+      "crmId": "0050423018",
+      "name": "Shin Pyeongtaek Power Co., Ltd."
+    },
+    {
+      "crmId": "0050428696",
+      "name": "SK Pharmteco Inc."
+    },
+    {
+      "crmId": "0050451167",
+      "name": "Hyundai Autoever Corp."
+    },
+    {
+      "crmId": "0050458807",
+      "name": "ASK Co., Ltd."
+    },
+    {
+      "crmId": "0050463292",
+      "name": "UNID btplus Co., Ltd."
+    },
+    {
+      "crmId": "0050467334",
+      "name": "MDPERT Co., Ltd."
+    },
+    {
+      "crmId": "0050474115",
+      "name": "Dawon Enterprise Co., Ltd."
+    },
+    {
+      "crmId": "0050503273",
+      "name": "Dongkuk Coated Metal Co., Ltd."
+    },
+    {
+      "crmId": "0050507906",
+      "name": "InVitros Co., Ltd."
+    },
+    {
+      "crmId": "0050521754",
+      "name": "Origin Consulting Co., Ltd."
+    },
+    {
+      "crmId": "0050553470",
+      "name": "Huons Global Co., Ltd."
+    },
+    {
+      "crmId": "0050673837",
+      "name": "JMC Consulting Co., Ltd"
+    },
+    {
+      "crmId": "0050684246",
+      "name": "Uyemura Korea Co., Ltd."
+    },
+    {
+      "crmId": "0050686090",
+      "name": "Hyundai motor company 2"
+    },
+    {
+      "crmId": "0050697385",
+      "name": "Koa Automotive Co., Ltd."
+    },
+    {
+      "crmId": "0050717427",
+      "name": "SK eternix co., Ltd."
+    },
+    {
+      "crmId": "0050731597",
+      "name": "HYUNDAI STEEL PIPE CO., LTD."
+    },
+    {
+      "crmId": "0050741933",
+      "name": "Woori Financial F&I Co., Ltd."
+    },
+    {
+      "crmId": "0050757502",
+      "name": "GENESIS CO., LTD."
+    },
+    {
+      "crmId": "0050759845",
+      "name": "Deepdive Inc."
+    },
+    {
+      "crmId": "0050764879",
+      "name": "e-accounting Inc."
+    },
+    {
+      "crmId": "0050775424",
+      "name": "SK speedmate Co., Ltd."
+    },
+    {
+      "crmId": "0050778591",
+      "name": "SILLA SG CO.,LTD."
+    },
+    {
+      "crmId": "0050779995",
+      "name": "BIZNBANK CO., LTD."
+    },
+    {
+      "crmId": "0050783289",
+      "name": "IRISBRIGHT Inc."
+    },
+    {
+      "crmId": "0050812681",
+      "name": "HMT Tech Co.,Ltd"
+    },
+    {
+      "crmId": "0050816862",
+      "name": "SJG HOLDINGS Co., Ltd."
+    },
+    {
+      "crmId": "0050823025",
+      "name": "UDS Co., Ltd."
+    },
+    {
+      "crmId": "0050829796",
+      "name": "NanoH2O Co.,Ltd."
+    },
+    {
+      "crmId": "0050835438",
+      "name": "Blue Elephant Co.,Ltd."
+    },
+    {
+      "crmId": "0050839941",
+      "name": "Seobu T&D Co., Ltd."
+    }
+  ]
+}

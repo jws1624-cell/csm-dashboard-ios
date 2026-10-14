@@ -1,0 +1,3957 @@
+'use strict';
+
+// Safari Extension 호환성 레이어
+const browserAPI = typeof browser !== 'undefined' ? browser : chrome;
+
+// ── 상수 ─────────────────────────────────────────────────────────────
+const ITSM_BASE = 'https://itsm.services.sap';
+const DEFAULT_AI_BASE = 'https://csm-case-dashboard.cfapps.ap12.hana.ondemand.com';
+const MCC_CATALOG_SYS_ID = 'fdac23381b5629105f03dcef9b4bcb7f';
+const MCC_PORTAL_ID = '712616f01bc6295036ac10e69b4bcb80';
+
+const COMPONENTS = {
+  BDC: ['BDC-', 'DS-', 'LOD-ANA', 'HAN-CLS', 'CA-ML-AIC', 'CA-ML-AILP'],
+  BTP: ['BC-CP', 'BC-AI', 'CA-BAS', 'EP-WZ', 'CA-LCA', 'BPI-PA', 'BPI-SIG',
+        'MOB-CLD', 'MOB-MBT', 'MOB-SDK-IOS', 'MOB-SDK-ADR', 'CA-ML-IPA', 'CA-JOULE']
+};
+
+const DEFAULT_OWNERS = [
+  { key: 'musig',    name: 'Musig Kim',     ids: ['1132804','50252316','1160926','7159632','1111210','1204702'] },
+  { key: 'lena',     name: 'Lena Kim',      ids: ['163611','1246058','12893127','1165964','1099120'] },
+  { key: 'woosuk',   name: 'WooSuk Jung',   ids: ['163611','1219179','1099120','50031003','1234020','1204702','50503273','1225691'] },
+  { key: 'minju',    name: 'Minju Kim',     ids: ['50252316','1233326','1132266','207184','1118974'] },
+  { key: 'jeongkyu', name: 'Jeongkyu Choi', ids: ['1132804','164813','1165964','17753797'] }
+];
+
+// ── 런타임 설정 (browserAPI.storage에서 로드, 없으면 기본값) ──────────────
+let _owners = DEFAULT_OWNERS;
+let _aiBase = DEFAULT_AI_BASE;
+
+function getAiInsightUrl() { return `${_aiBase}/api/ai/insight`; }
+function getMccGenerateUrl() { return `${_aiBase}/api/mcc/generate`; }
+function getRetrieveCaseUrl() { return `${_aiBase}/api/itsm/retrieve-case`; }
+
+// ── i18n ─────────────────────────────────────────────────────────────
+const STRINGS = {
+  ko: {
+    searchPlaceholder: '고객사 / 케이스 번호 검색…',
+    period1m: '1개월', period3m: '3개월', period6m: '6개월',
+    search: '조회', tabAll: '전체', tabNotifications: '🔔 Notifications',
+    settingsLanguage: '언어', settingsTheme: '테마',
+    settingsStartTab: '시작 탭', settingsFavBackup: 'Favourite 백업',
+    favExport: '⬆ 내보내기', favImport: '⬇ 불러오기',
+    noCases: '케이스가 없습니다.', noAccounts: '고객사가 없습니다.',
+    account: '고객사', assignedTo: '담당자', createdOn: '생성일',
+    relatedLinks: '관련 링크', noRelatedLinks: '관련 Jira/INC 없음',
+    aiAnalyze: '✨ AI 분석', aiAnalyzing: '분석 중…',
+    aiAutoRun: '케이스를 선택하면 AI 분석이 자동 실행됩니다.',
+    aiCustomerInquiry: '고객 질의', aiCurrentState: '현재 상황·진행', aiRequiredAction: '필요 액션',
+    copyForEmail: ' 전체 복사 (고객 메일용)',
+    copyTimeline: ' 타임라인 복사',
+    addMemo: '메모 추가', add: '추가',
+    memoInternal: 'Internal memo — ITSM 내부에만 표시 (고객 미공개)',
+    memoExternal: 'External memo — 고객에게 공개됩니다.',
+    memoPlaceholder: '메모 내용을 입력하세요…',
+    timelineLoading: '타임라인 로드 중…',
+    timelineEmpty: 'AI 분석을 실행하면 진행 타임라인이 표시됩니다.',
+    selectFile: '파일 선택', upload: '업로드',
+    watchNoOne: 'Watch 중인 사람이 없습니다.',
+    watchAdding: '+ 추가', watchViewing: '👁 보는 중',
+    watchSearch: '이름 또는 이메일 검색…',
+    noAccount: '고객사를 찾을 수 없습니다',
+    noMappedAccount: '매핑된 고객사가 없습니다. korea-accounts.json을 확인하세요.',
+    selectStatus: 'Status를 하나 이상 선택하세요.',
+    aiError: 'AI 분석 실패', copied: '클립보드에 복사되었습니다.',
+    memoAdded: '메모가 추가되었습니다.',
+    memoFailed: '메모 저장 실패',
+    mccAlreadyEscalated: '은(는) 이미 MCC 에스컬레이션이 등록되어 있습니다.',
+    mccGenerating: 'AI가 에스컬레이션 내용을 생성 중…',
+    mccExpectedAction: 'Expected Action',
+    mccCancel: '취소', mccSubmit: '⚡ 제출', mccSubmitting: '제출 중…',
+    mccSuccess: 'MCC Escalation 제출 완료', mccFailed: '제출 실패',
+    mccUnknownError: '알 수 없는 오류',
+    watchMe: '나', tlViewFull: '전체 원문은 ServiceNow에서 보기 →',
+    sourceEntryLabel: '최근 회신 원문',
+    watchAdding2: '추가 중…', watchFailed: '검색 실패',
+    favEmpty: '즐겨찾기가 없습니다.', favEmptyHint: '고객사 또는 케이스의 ⭐ 버튼을 눌러 추가하세요.',
+    favSectionAccount: '고객사', favSectionCase: '케이스',
+    favRemove: 'Favourite 해제', favAdd: 'Favourite 추가',
+    favUndo: '다시 클릭하면 취소',
+    watchUpdateFailed: 'Watch list 업데이트 실패',
+    loginError: 'ITSM 로그인 정보를 확인할 수 없습니다.',
+    caseFetchFailed: '케이스 조회 실패',
+    searchNoResult: '검색 결과 없음',
+    itsmFetchFailed: 'ITSM 조회 실패',
+    itsmPartialFail: '⚠️ 일부 실패',
+    itsmFetching: 'ITSM 조회 중…',
+    itsmError: '조회 중 오류 발생',
+    timelineLoadFailed: '타임라인 로드 실패',
+    kbaLabel: 'KBA',
+    watchRemove: '제거',
+    watchSearching: '검색 중…',
+    watchNoResult: '검색 결과 없음',
+    watchAddBtn: '+ 추가',
+    ssoStart: 'SSO 인증 중…',
+    ssoIdp: 'SAP SSO 인증 중…',
+    itsmReturn: 'ITSM 세션 확립 중…',
+    favImportInvalid: '올바른 Favourite 백업 파일이 아닙니다.',
+    favImportDone: '복원 완료',
+    favImportAdded: '건 추가됨 (총',
+    favImportTotal: '건)',
+    favImportError: '파일 읽기 오류',
+    uploadProgress: '업로드 중…',
+    uploadFailed: '업로드 실패',
+    fileReadFailed: '파일 읽기 실패',
+    notifChecking: '변경사항 확인 중…',
+    notifEmpty: '새로운 알림이 없습니다.',
+    notifTitle: '케이스 업데이트',
+    notifClearAll: 'Clear All',
+    notifTypeState: '상태 변경',
+    notifTypeJournal: '저널 업데이트',
+    notifTypePriority: '우선순위 변경',
+    filesCount: '개 파일',
+    copied2: '✅ 복사됨',
+    caseLabel: '케이스',
+    titleLabel: '제목',
+    statusPriorityLabel: '상태/우선순위',
+    incLabel: '관련 INC',
+    timeAgoMins: '분 전',
+    timeAgoHours: '시간 전',
+    timeAgoDays: '일 전',
+    timeAgoMonths: '개월 전',
+    actorCustomer: '고객',
+    actorBoth: '양측',
+    copyCustomerInquiry: '[고객 질의]',
+    copyCurrentState: '[현재 상황·진행]',
+    copyRequiredAction: '[필요 액션]',
+    copyTimeline2: '[진행 타임라인]',
+    caseSearchLabel: '🔍 케이스 검색',
+    caseSearchHint: 'ITSM 케이스 번호로 조회',
+    searchDirectLabel: '검색',
+    searchDirectHint: '케이스 번호로 조회',
+    searchUnifiedLabel: '통합 검색',
+    searchUnifiedHint: '고객사 + 케이스 함께 조회',
+    searchSectionAccount: '🏢 고객사',
+    searchSectionCase: '📋 케이스',
+    crmIdNotFound: '에 해당하는 고객사명을 찾을 수 없습니다.',
+    retry: '재시도',
+    aiServerError: 'AI 서버 오류',
+    bcpDesc: 'SAP 백엔드 인시던트(BCP) — 근본원인 티켓',
+    copyLink: '링크 복사',
+  },
+  en: {
+    searchPlaceholder: 'Account / Case number search…',
+    period1m: '1 Month', period3m: '3 Months', period6m: '6 Months',
+    search: 'Search', tabAll: 'All', tabNotifications: '🔔 Notifications',
+    settingsLanguage: 'Language', settingsTheme: 'Theme',
+    settingsStartTab: 'Start Tab', settingsFavBackup: 'Favourite Backup',
+    favExport: '⬆ Export', favImport: '⬇ Import',
+    noCases: 'No cases found.', noAccounts: 'No accounts.',
+    account: 'Account', assignedTo: 'Assigned To', createdOn: 'Created On',
+    relatedLinks: 'Related Links', noRelatedLinks: 'No related Jira/INC',
+    aiAnalyze: '✨ AI Analyze', aiAnalyzing: 'Analyzing…',
+    aiAutoRun: 'Select a case to auto-run AI analysis.',
+    aiCustomerInquiry: 'Customer Inquiry', aiCurrentState: 'Current State', aiRequiredAction: 'Required Action',
+    copyForEmail: ' Copy all (for customer email)',
+    copyTimeline: ' Copy Timeline',
+    addMemo: 'Add Memo', add: 'Add',
+    memoInternal: 'Internal memo — visible inside ITSM only (not shown to customer)',
+    memoExternal: 'External memo — visible to the customer.',
+    memoPlaceholder: 'Enter memo content…',
+    timelineLoading: 'Loading timeline…',
+    timelineEmpty: 'Run AI analysis to show the progress timeline.',
+    selectFile: 'Select File', upload: 'Upload',
+    watchNoOne: 'No one is watching.',
+    watchAdding: '+ Add', watchViewing: '👁 Watching',
+    watchSearch: 'Search by name or email…',
+    noAccount: 'Account not found',
+    noMappedAccount: 'No mapped accounts. Check korea-accounts.json.',
+    selectStatus: 'Please select at least one Status.',
+    aiError: 'AI analysis failed', copied: 'Copied to clipboard.',
+    memoAdded: 'Memo added.',
+    memoFailed: 'Failed to save memo',
+    mccAlreadyEscalated: 'already has an active MCC escalation.',
+    mccGenerating: 'AI is generating escalation content…',
+    mccExpectedAction: 'Expected Action',
+    mccCancel: 'Cancel', mccSubmit: '⚡ Submit', mccSubmitting: 'Submitting…',
+    mccSuccess: 'MCC Escalation submitted', mccFailed: 'Submit failed',
+    mccUnknownError: 'Unknown error',
+    watchMe: 'Me', tlViewFull: 'View full log in ServiceNow →',
+    sourceEntryLabel: 'Latest entry (raw)',
+    watchAdding2: 'Adding…', watchFailed: 'Search failed',
+    favEmpty: 'No favourites yet.', favEmptyHint: 'Press ⭐ on an account or case to add.',
+    favSectionAccount: 'Accounts', favSectionCase: 'Cases',
+    favRemove: 'Remove favourite', favAdd: 'Add favourite',
+    favUndo: 'Click again to undo',
+    watchUpdateFailed: 'Failed to update watch list',
+    loginError: 'Could not verify ITSM login.',
+    caseFetchFailed: 'Failed to fetch case',
+    searchNoResult: 'No results for',
+    itsmFetchFailed: 'ITSM fetch failed',
+    itsmPartialFail: '⚠️ Partial failure',
+    itsmFetching: 'Fetching from ITSM…',
+    itsmError: 'Error during fetch',
+    timelineLoadFailed: 'Timeline load failed',
+    kbaLabel: 'KBA',
+    watchRemove: 'Remove',
+    watchSearching: 'Searching…',
+    watchNoResult: 'No results',
+    watchAddBtn: '+ Add',
+    ssoStart: 'Starting SSO…',
+    ssoIdp: 'SAP SSO authentication…',
+    itsmReturn: 'Establishing ITSM session…',
+    favImportInvalid: 'Not a valid Favourite backup file.',
+    favImportDone: 'Restored',
+    favImportAdded: 'added (total',
+    favImportTotal: ')',
+    favImportError: 'File read error',
+    uploadProgress: 'Uploading…',
+    uploadFailed: 'Upload failed',
+    fileReadFailed: 'File read failed',
+    notifChecking: 'Checking updates…',
+    notifEmpty: 'No new notifications.',
+    notifTitle: 'Case Updates',
+    notifClearAll: 'Clear All',
+    notifTypeState: 'State Changed',
+    notifTypeJournal: 'Journal Updated',
+    notifTypePriority: 'Priority Changed',
+    filesCount: ' files',
+    copied2: '✅ Copied',
+    caseLabel: 'Case',
+    titleLabel: 'Title',
+    statusPriorityLabel: 'Status/Priority',
+    incLabel: 'Related INC',
+    timeAgoMins: 'm ago',
+    timeAgoHours: 'h ago',
+    timeAgoDays: 'd ago',
+    timeAgoMonths: 'mo ago',
+    actorCustomer: 'Customer',
+    actorBoth: 'Both',
+    copyCustomerInquiry: '[Customer Inquiry]',
+    copyCurrentState: '[Current State]',
+    copyRequiredAction: '[Required Action]',
+    copyTimeline2: '[Progress Timeline]',
+    caseSearchLabel: '🔍 Case search',
+    caseSearchHint: 'Search by ITSM case number',
+    searchDirectLabel: 'Search',
+    searchDirectHint: 'Search by case number',
+    searchUnifiedLabel: 'Unified Search',
+    searchUnifiedHint: 'Search accounts + cases together',
+    searchSectionAccount: '🏢 Account',
+    searchSectionCase: '📋 Case',
+    crmIdNotFound: 'No account name found for CRM ID',
+    retry: 'Retry',
+    aiServerError: 'AI server error',
+    bcpDesc: 'SAP Backend Incident (BCP) — root cause ticket',
+    copyLink: 'Copy link',
+  },
+  zh: {
+    searchPlaceholder: '搜索客户 / 案例编号…',
+    period1m: '1个月', period3m: '3个月', period6m: '6个月',
+    search: '查询', tabAll: '全部', tabNotifications: '🔔 通知',
+    settingsLanguage: '语言', settingsTheme: '主题',
+    settingsStartTab: '起始标签', settingsFavBackup: '收藏备份',
+    favExport: '⬆ 导出', favImport: '⬇ 导入',
+    noCases: '没有案例。', noAccounts: '没有客户。',
+    account: '客户', assignedTo: '负责人', createdOn: '创建日期',
+    relatedLinks: '相关链接', noRelatedLinks: '无相关 Jira/INC',
+    aiAnalyze: '✨ AI 分析', aiAnalyzing: '分析中…',
+    aiAutoRun: '选择案例后自动运行 AI 分析。',
+    aiCustomerInquiry: '客户询问', aiCurrentState: '当前状态', aiRequiredAction: '所需操作',
+    copyForEmail: ' 全部复制（客户邮件用）',
+    copyTimeline: ' 复制时间线',
+    addMemo: '添加备注', add: '添加',
+    memoInternal: '内部备注 — 仅在 ITSM 内部显示（客户不可见）',
+    memoExternal: '外部备注 — 客户可见。',
+    memoPlaceholder: '输入备注内容…',
+    timelineLoading: '加载时间线中…',
+    timelineEmpty: '运行 AI 分析以显示进度时间线。',
+    selectFile: '选择文件', upload: '上传',
+    watchNoOne: '没有人在关注。',
+    watchAdding: '+ 添加', watchViewing: '👁 关注中',
+    watchSearch: '按姓名或邮箱搜索…',
+    noAccount: '找不到客户',
+    noMappedAccount: '没有映射的客户。请检查 korea-accounts.json。',
+    selectStatus: '请至少选择一个状态。',
+    aiError: 'AI 分析失败', copied: '已复制到剪贴板。',
+    memoAdded: '备注已添加。',
+    memoFailed: '备注保存失败',
+    mccAlreadyEscalated: '已存在 MCC 升级。',
+    mccGenerating: 'AI 正在生成升级内容…',
+    mccExpectedAction: 'Expected Action',
+    mccCancel: '取消', mccSubmit: '⚡ 提交', mccSubmitting: '提交中…',
+    mccSuccess: 'MCC Escalation 提交完成', mccFailed: '提交失败',
+    mccUnknownError: '未知错误',
+    watchMe: '我', tlViewFull: '在 ServiceNow 中查看完整记录 →',
+    sourceEntryLabel: '最新条目（原文）',
+    watchAdding2: '添加中…', watchFailed: '搜索失败',
+    favEmpty: '暂无收藏。', favEmptyHint: '点击客户或案例上的 ⭐ 按钮添加。',
+    favSectionAccount: '客户', favSectionCase: '案例',
+    favRemove: '取消收藏', favAdd: '添加收藏',
+    favUndo: '再次点击可撤销',
+    watchUpdateFailed: 'Watch list 更新失败',
+    loginError: '无法验证 ITSM 登录。',
+    caseFetchFailed: '案例获取失败',
+    searchNoResult: '无结果',
+    itsmFetchFailed: 'ITSM 获取失败',
+    itsmPartialFail: '⚠️ 部分失败',
+    itsmFetching: '正在从 ITSM 获取…',
+    itsmError: '获取出错',
+    timelineLoadFailed: '时间线加载失败',
+    kbaLabel: 'KBA',
+    watchRemove: '移除',
+    watchSearching: '搜索中…',
+    watchNoResult: '无结果',
+    watchAddBtn: '+ 添加',
+    ssoStart: 'SSO 认证中…',
+    ssoIdp: 'SAP SSO 认证中…',
+    itsmReturn: '正在建立 ITSM 会话…',
+    favImportInvalid: '不是有效的收藏备份文件。',
+    favImportDone: '已恢复',
+    favImportAdded: '条已添加（共',
+    favImportTotal: '条）',
+    favImportError: '文件读取错误',
+    uploadProgress: '上传中…',
+    uploadFailed: '上传失败',
+    fileReadFailed: '文件读取失败',
+    notifChecking: '检查更新中…',
+    notifEmpty: '没有新通知。',
+    notifTitle: '案例更新',
+    notifClearAll: '全部清除',
+    notifTypeState: '状态变更',
+    notifTypeJournal: '日志更新',
+    notifTypePriority: '优先级变更',
+    filesCount: ' 个文件',
+    copied2: '✅ 已复制',
+    caseLabel: '案例',
+    titleLabel: '标题',
+    statusPriorityLabel: '状态/优先级',
+    incLabel: '关联 INC',
+    timeAgoMins: '分钟前',
+    timeAgoHours: '小时前',
+    timeAgoDays: '天前',
+    timeAgoMonths: '个月前',
+    actorCustomer: '客户',
+    actorBoth: '双方',
+    copyCustomerInquiry: '[客户询问]',
+    copyCurrentState: '[当前状态]',
+    copyRequiredAction: '[所需操作]',
+    copyTimeline2: '[进展时间线]',
+    caseSearchLabel: '🔍 案例搜索',
+    caseSearchHint: '按 ITSM 案例编号查询',
+    searchDirectLabel: '搜索',
+    searchDirectHint: '按案例编号查询',
+    searchUnifiedLabel: '综合搜索',
+    searchUnifiedHint: '同时搜索客户和案例',
+    searchSectionAccount: '🏢 客户',
+    searchSectionCase: '📋 案例',
+    crmIdNotFound: '找不到对应的客户名称，CRM ID：',
+    retry: '重试',
+    aiServerError: 'AI 服务器错误',
+    bcpDesc: 'SAP 后端事件 (BCP) — 根本原因工单',
+    copyLink: '复制链接',
+  },
+  ja: {
+    searchPlaceholder: '顧客 / ケース番号で検索…',
+    period1m: '1ヶ月', period3m: '3ヶ月', period6m: '6ヶ月',
+    search: '検索', tabAll: 'すべて', tabNotifications: '🔔 通知',
+    settingsLanguage: '言語', settingsTheme: 'テーマ',
+    settingsStartTab: '開始タブ', settingsFavBackup: 'お気に入りバックアップ',
+    favExport: '⬆ エクスポート', favImport: '⬇ インポート',
+    noCases: 'ケースがありません。', noAccounts: '顧客がありません。',
+    account: '顧客', assignedTo: '担当者', createdOn: '作成日',
+    relatedLinks: '関連リンク', noRelatedLinks: '関連 Jira/INC なし',
+    aiAnalyze: '✨ AI 分析', aiAnalyzing: '分析中…',
+    aiAutoRun: 'ケースを選択すると AI 分析が自動実行されます。',
+    aiCustomerInquiry: 'お客様のお問い合わせ', aiCurrentState: '現在の状況', aiRequiredAction: '必要なアクション',
+    copyForEmail: ' 全てコピー（顧客メール用）',
+    copyTimeline: ' タイムラインをコピー',
+    addMemo: 'メモ追加', add: '追加',
+    memoInternal: '内部メモ — ITSM 内部のみ表示（顧客には非公開）',
+    memoExternal: '外部メモ — 顧客に公開されます。',
+    memoPlaceholder: 'メモ内容を入力してください…',
+    timelineLoading: 'タイムライン読み込み中…',
+    timelineEmpty: 'AI 分析を実行すると進行タイムラインが表示されます。',
+    selectFile: 'ファイル選択', upload: 'アップロード',
+    watchNoOne: 'ウォッチしている人はいません。',
+    watchAdding: '+ 追加', watchViewing: '👁 ウォッチ中',
+    watchSearch: '名前またはメールで検索…',
+    noAccount: '顧客が見つかりません',
+    noMappedAccount: 'マッピングされた顧客がありません。korea-accounts.json を確認してください。',
+    selectStatus: 'Status を1つ以上選択してください。',
+    aiError: 'AI 分析失敗', copied: 'クリップボードにコピーしました。',
+    memoAdded: 'メモが追加されました。',
+    memoFailed: 'メモの保存に失敗しました',
+    mccAlreadyEscalated: 'にはすでに MCC エスカレーションが登録されています。',
+    mccGenerating: 'AI がエスカレーション内容を生成中…',
+    mccExpectedAction: 'Expected Action',
+    mccCancel: 'キャンセル', mccSubmit: '⚡ 送信', mccSubmitting: '送信中…',
+    mccSuccess: 'MCC Escalation 送信完了', mccFailed: '送信失敗',
+    mccUnknownError: '不明なエラー',
+    watchMe: '自分', tlViewFull: 'ServiceNow で全文を見る →',
+    sourceEntryLabel: '最新エントリ（原文）',
+    watchAdding2: '追加中…', watchFailed: '検索失敗',
+    favEmpty: 'お気に入りがありません。', favEmptyHint: '顧客またはケースの ⭐ を押して追加してください。',
+    favSectionAccount: '顧客', favSectionCase: 'ケース',
+    favRemove: 'お気に入り解除', favAdd: 'お気に入り追加',
+    favUndo: 'もう一度クリックでキャンセル',
+    watchUpdateFailed: 'Watch list の更新に失敗しました',
+    loginError: 'ITSM ログイン情報を確認できません。',
+    caseFetchFailed: 'ケースの取得に失敗しました',
+    searchNoResult: '結果なし',
+    itsmFetchFailed: 'ITSM 取得失敗',
+    itsmPartialFail: '⚠️ 一部失敗',
+    itsmFetching: 'ITSM から取得中…',
+    itsmError: '取得中にエラー',
+    timelineLoadFailed: 'タイムライン読み込み失敗',
+    kbaLabel: 'KBA',
+    watchRemove: '削除',
+    watchSearching: '検索中…',
+    watchNoResult: '結果なし',
+    watchAddBtn: '+ 追加',
+    ssoStart: 'SSO 認証中…',
+    ssoIdp: 'SAP SSO 認証中…',
+    itsmReturn: 'ITSM セッション確立中…',
+    favImportInvalid: '有効なお気に入りバックアップファイルではありません。',
+    favImportDone: '復元完了',
+    favImportAdded: '件追加されました（合計',
+    favImportTotal: '件）',
+    favImportError: 'ファイル読み込みエラー',
+    uploadProgress: 'アップロード中…',
+    uploadFailed: 'アップロード失敗',
+    fileReadFailed: 'ファイル読み込み失敗',
+    notifChecking: '更新確認中…',
+    notifEmpty: '新しい通知はありません。',
+    notifTitle: 'ケース更新',
+    notifClearAll: 'すべてクリア',
+    notifTypeState: 'ステータス変更',
+    notifTypeJournal: 'ジャーナル更新',
+    notifTypePriority: '優先度変更',
+    filesCount: ' 件のファイル',
+    copied2: '✅ コピー済み',
+    caseLabel: 'ケース',
+    titleLabel: 'タイトル',
+    statusPriorityLabel: 'ステータス/優先度',
+    incLabel: '関連 INC',
+    timeAgoMins: '分前',
+    timeAgoHours: '時間前',
+    timeAgoDays: '日前',
+    timeAgoMonths: 'ヶ月前',
+    actorCustomer: 'お客様',
+    actorBoth: '双方',
+    copyCustomerInquiry: '[お客様のお問い合わせ]',
+    copyCurrentState: '[現在の状況]',
+    copyRequiredAction: '[必要なアクション]',
+    copyTimeline2: '[進行タイムライン]',
+    caseSearchLabel: '🔍 ケース検索',
+    caseSearchHint: 'ITSM ケース番号で検索',
+    searchDirectLabel: '検索',
+    searchDirectHint: 'ケース番号で検索',
+    searchUnifiedLabel: '統合検索',
+    searchUnifiedHint: '顧客とケースをまとめて検索',
+    searchSectionAccount: '🏢 顧客',
+    searchSectionCase: '📋 ケース',
+    crmIdNotFound: 'CRM ID に該当する顧客名が見つかりません',
+    retry: '再試行',
+    aiServerError: 'AI サーバーエラー',
+    bcpDesc: 'SAP バックエンドインシデント (BCP) — 根本原因チケット',
+    copyLink: 'リンクをコピー',
+  }
+};
+
+let _uiLang = 'ko';
+
+function t(key) {
+  return (STRINGS[_uiLang] || STRINGS.ko)[key] || STRINGS.ko[key] || key;
+}
+
+function applyI18n() {
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    el.textContent = t(el.dataset.i18n);
+  });
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+    el.placeholder = t(el.dataset.i18nPlaceholder);
+  });
+}
+
+function detectBrowserLang() {
+  const lang = (navigator.language || 'ko').toLowerCase();
+  if (lang.startsWith('ko')) return 'ko';
+  if (lang.startsWith('zh')) return 'zh';
+  if (lang.startsWith('ja')) return 'ja';
+  return 'en';
+}
+
+
+let koreaAccounts = null;
+let selectedOwnerKey = 'all';
+let currentCases = [];
+let selectedCase = null;
+let myUserId = null;       // ITSM 로그인 사용자 sys_id
+let myUserName = null;     // 표시용
+let myEmail = null;        // watch_list 등록용
+let _lastTargets = null;    // 마지막 조회 타겟([{crmId,name}]) — status 필터 변경 시 재조회용
+let _rawCases = [];         // 컴포넌트 필터 적용 전 원본 케이스 — comp 필터 변경 시 클라 재필터용
+let _lastAiInsight = null;  // 마지막 AI 구조화 결과(전체 복사용)
+let _lastAiLang = null;     // _lastAiInsight를 생성한 언어 — 언어 변경 시 재실행 판단용
+let _memoType = 'internal'; // 'internal' | 'external'
+let _favourites = [];       // [{crmId, name}] — browserAPI.storage.local 로드 후 채워짐
+let _seenCaseStates = {};   // { [sys_id]: state_code } — 마지막으로 클릭해서 읽은 상태
+
+// ── 케이스 상태 변경 추적 ──────────────────────────────────────────
+function loadSeenStates() {
+  browserAPI.storage.local.get('seenCaseStates', d => {
+    _seenCaseStates = d.seenCaseStates || {};
+  });
+}
+
+function markCaseSeen(sysId, stateCode) {
+  _seenCaseStates[sysId] = stateCode;
+  browserAPI.storage.local.set({ seenCaseStates: _seenCaseStates });
+}
+
+function isCaseStateChanged(sysId, currentCode) {
+  if (!(sysId in _seenCaseStates)) return false; // 한 번도 안 읽은 케이스는 표시 안 함
+  return _seenCaseStates[sysId] !== String(currentCode);
+}
+
+// ── Favourite 관리 ────────────────────────────────────────────────
+async function loadFavourites() {
+  return new Promise(resolve => {
+    browserAPI.storage.local.get('favourites', data => {
+      _favourites = Array.isArray(data.favourites) ? data.favourites : [];
+      resolve(_favourites);
+    });
+  });
+}
+
+function saveFavourites() {
+  browserAPI.storage.local.set({ favourites: _favourites });
+}
+
+function isFavourite(crmId) {
+  return _favourites.some(f => f.type !== 'case' && String(f.crmId) === String(crmId));
+}
+
+function addFavourite(crmId, name) {
+  if (isFavourite(crmId)) return;
+  _favourites.push({ type: 'account', crmId: String(crmId), name });
+  saveFavourites();
+}
+
+function removeFavourite(crmId) {
+  _favourites = _favourites.filter(f => !(f.type !== 'case' && String(f.crmId) === String(crmId)));
+  saveFavourites();
+}
+
+function isFavouriteCase(sysId) {
+  return _favourites.some(f => f.type === 'case' && f.sysId === sysId);
+}
+
+async function addFavouriteCase(c) {
+  if (isFavouriteCase(c.sys_id)) return;
+  _favourites.push({ type: 'case', sysId: c.sys_id, number: c.number, title: c.short_description, account: c.account, correlation_display: c.correlation_display || '', state: c.state || '', state_code: c.state_code || '', priority: c.priority || '', priority_code: c.priority_code || '', u_app_component: c.u_app_component || '' });
+  saveFavourites();
+
+  // 3. Favourite 추가 시 즉시 lastState 저장
+  const journal = c._journal || '';
+  const { lastState } = await browserAPI.storage.local.get('lastState') || {};
+  const state = lastState || {};
+  state[c.number] = {
+    state: c.state,
+    priority: c.priority,
+    journal: journal,
+    updatedAt: new Date().toISOString()
+  };
+  await browserAPI.storage.local.set({ lastState: state });
+}
+
+async function removeFavouriteCase(sysId) {
+  const removed = _favourites.find(f => f.type === 'case' && f.sysId === sysId);
+  _favourites = _favourites.filter(f => !(f.type === 'case' && f.sysId === sysId));
+  saveFavourites();
+
+  // Favourite 제거 시 lastState에서도 삭제
+  if (removed) {
+    const { lastState } = await browserAPI.storage.local.get('lastState') || {};
+    const state = lastState || {};
+    delete state[removed.number];
+    await browserAPI.storage.local.set({ lastState: state });
+  }
+}
+
+function updateFavCaseBtn() {
+  const btn = document.getElementById('btnFavCase');
+  if (!btn || !selectedCase) return;
+  const fav = isFavouriteCase(selectedCase.sys_id);
+  btn.textContent = fav ? '⭐' : '☆';
+  btn.classList.toggle('active', fav);
+}
+
+function updateFavouriteBtn() {
+  const btn = document.getElementById('btnAddFavourite');
+  if (!btn) return;
+  if (!_lastTargets || _lastTargets.length !== 1) { btn.classList.add('hidden'); return; }
+  const { crmId } = _lastTargets[0];
+  btn.textContent = isFavourite(crmId) ? '⭐' : '☆';
+  btn.classList.remove('hidden');
+}
+
+// ── 유틸 ─────────────────────────────────────────────────────────────
+function timeAgo(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr.replace(' ', 'T'));
+  const diff = Date.now() - d.getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 60) return `${mins}${t('timeAgoMins')}`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}${t('timeAgoHours')}`;
+  const days = Math.floor(hrs / 24);
+  if (days < 30) return `${days}${t('timeAgoDays')}`;
+  return `${Math.floor(days / 30)}${t('timeAgoMonths')}`;
+}
+
+function getStr(v) {
+  return (v && typeof v === 'object') ? (v.display_value || v.value || '') : (v || '');
+}
+
+function normalizeCase(c) {
+  const component = getStr(c.u_app_component);
+  const createdOn = getStr(c.sys_created_on);
+  // account sys_id 추출 — account가 객체면 link에서, display_value만 있으면 별도 조회 필요
+  let accountSysId = '';
+  if (typeof c.account === 'object' && c.account?.link) {
+    accountSysId = c.account.link.split('/').pop() || '';
+  }
+  return {
+    sys_id: getStr(c.sys_id),
+    number: getStr(c.number),
+    short_description: getStr(c.short_description),
+    state: getStr(c.state),
+    state_code: typeof c.state === 'object' ? (c.state.value || '') : String(c.state || ''),
+    action_status: getStr(c.action_status),
+    priority: getStr(c.priority),
+    priority_code: typeof c.priority === 'object' ? (c.priority.value || '') : String(c.priority || ''),
+    sys_created_on: createdOn,
+    created_ago: timeAgo(createdOn),
+    assigned_to: getStr(c.assigned_to),
+    account: getStr(c.account),
+    account_sys_id: accountSysId,
+    u_app_component: component,
+    correlation_display: getStr(c.correlation_display),
+    watch_list: getStr(c.watch_list), // 콤마 구분 email 목록
+    active_escalation: getStr(c.active_escalation), // 에스컬레이션 레코드(예: ESC1561340), 없으면 ''
+    mcc_escalated: !!getStr(c.active_escalation) // active_escalation 값 있으면 에스컬레이션 진행중
+  };
+}
+
+function priorityBadge(code, label) {
+  const cls = { '1': 'badge-p1', '2': 'badge-p2', '3': 'badge-p3', '4': 'badge-p4' }[code] || 'badge-p4';
+  return `<span class="badge ${cls}">${label || 'P' + code}</span>`;
+}
+
+function stateBadge(code, label) {
+  const resolved = ['7', '8'].includes(String(code));
+  return `<span class="badge ${resolved ? 'badge-resolved' : 'badge-state'}">${label}</span>`;
+}
+
+// ── 개별 복사 헬퍼 ────────────────────────────────────────────────────
+// 버튼 클릭 시 getText()가 반환하는 문자열을 클립보드에 복사, 잠깐 ✅ 표시
+function attachCopy(btnEl, getText) {
+  if (!btnEl) return;
+  btnEl.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const text = (typeof getText === 'function' ? getText() : getText) || '';
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(() => {
+      const orig = btnEl.innerHTML;
+      btnEl.textContent = '✅';
+      setTimeout(() => { btnEl.innerHTML = orig; }, 1200);
+    });
+  });
+}
+
+// HTML → 평문 (링크 텍스트 보존)
+function htmlToText(html) {
+  const div = document.createElement('div');
+  div.innerHTML = String(html || '')
+    .replace(/\[code\]/g, '').replace(/\[\/code\]/g, '')
+    .replace(/<br\s*\/?>/gi, '\n');
+  return (div.textContent || '').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+// ── Journal(comments_and_work_notes) 파서 ────────────────────────────
+// 헤더: "YYYY-MM-DD HH:MM:SS - 작성자 (UserID) (Type)" 또는 "YYYY-MM-DD HH:MM:SS - 작성자 (Type)"
+function parseJournal(raw) {
+  if (!raw) return [];
+  // 마지막 괄호 쌍이 Type, 그 앞의 선택적 괄호 쌍이 UserID
+  const headerRe = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) - (.+?) \(([^()]+)\)\s*(?:\(([^()]+)\))?\s*$/;
+  const lines = String(raw).split('\n');
+  const entries = [];
+  let cur = null;
+  for (const line of lines) {
+    const m = line.match(headerRe);
+    if (m) {
+      if (cur) entries.push(cur);
+      // m[4] 있으면: author=m[2], userId=m[3], type=m[4]
+      // m[4] 없으면: author=m[2], type=m[3]
+      const author = m[2].trim();
+      const type = m[4] ? m[4].trim() : m[3].trim();
+      cur = { time: m[1], author, type, bodyLines: [] };
+    } else if (cur) {
+      cur.bodyLines.push(line);
+    }
+  }
+  if (cur) entries.push(cur);
+  return entries.map(e => ({
+    time: e.time,
+    author: e.author,
+    type: e.type,
+    html: e.bodyLines.join('\n'),
+    text: htmlToText(e.bodyLines.join('\n'))
+  }));
+}
+
+// journal HTML 전체에서 KBA/Note me.sap.com/notes 링크 추출 (중복 제거)
+function extractNoteLinks(rawJournal) {
+  const out = [];
+  const seen = new Set();
+  // 1) <a href="...me.sap.com/notes/..."> 링크 태그
+  const reLink = /<a[^>]+href=["']([^"']*me\.sap\.com\/notes\/[^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  let m;
+  while ((m = reLink.exec(rawJournal || '')) !== null) {
+    const url = m[1];
+    if (seen.has(url)) continue;
+    seen.add(url);
+    const title = htmlToText(m[2]) || url;
+    out.push({ url, title });
+  }
+  // 2) plain text 10자리 숫자 (Note/KBA 번호) — 링크 없는 경우
+  const plain = (rawJournal || '').replace(/<[^>]+>/g, ' '); // strip HTML
+  const reNum = /\b(\d{10})\b/g;
+  while ((m = reNum.exec(plain)) !== null) {
+    const num = m[1];
+    const url = `https://me.sap.com/notes/${num}`;
+    if (seen.has(url)) continue;
+    seen.add(url);
+    out.push({ url, title: num });
+  }
+  return out;
+}
+
+// ── ITSM 통신 (background로 위임) ───────────────────────────────────
+function itsmFetch(path) {
+  return new Promise((resolve, reject) => {
+    console.log('[CSM] itsmFetch →', path.slice(0, 100));
+    browserAPI.runtime.sendMessage({ type: 'ITSM_QUERY', path }, (resp) => {
+      if (browserAPI.runtime.lastError) {
+        const err = browserAPI.runtime.lastError.message;
+        console.error('[CSM] sendMessage 실패:', err);
+        return reject(new Error('Extension 통신 오류: ' + err));
+      }
+      if (!resp || !resp.ok) {
+        const err = resp?.error || 'ITSM 오류';
+        console.error('[CSM] ITSM 응답 실패:', err);
+        return reject(new Error(err));
+      }
+      resolve(resp.data);
+    });
+  });
+}
+
+// ── 내 계정 정보 ─────────────────────────────────────────────────────
+async function loadMyUser() {
+  if (myUserId) return;
+  try {
+    // 현재 세션 사용자를 표준 API로 조회 (동적 gs.getUserName() 쿼리는 REST에서 차단됨)
+    const me = await itsmFetch('/api/now/ui/user/current_user');
+    const uid = me?.result?.user_sys_id || me?.result?.sys_id;
+    if (uid) {
+      const data = await itsmFetch(`/api/now/table/sys_user/${uid}?sysparm_fields=sys_id,name,email&sysparm_display_value=true`);
+      const u = data?.result;
+      if (u) {
+        myUserId = getStr(u.sys_id);
+        myUserName = getStr(u.name);
+        myEmail = getStr(u.email);
+      }
+    }
+  } catch (e) {
+    console.warn('내 사용자 정보 로드 실패:', e.message);
+  }
+}
+
+// ── 고객사 데이터 ────────────────────────────────────────────────────
+async function loadKoreaAccounts() {
+  if (koreaAccounts) return koreaAccounts;
+  const url = browserAPI.runtime.getURL('korea-accounts.json');
+  const r = await fetch(url);
+  const data = await r.json();
+  koreaAccounts = data.accounts || [];
+  return koreaAccounts;
+}
+
+function buildCrmMap(accounts) {
+  const map = {};
+  accounts.forEach(a => {
+    const raw = String(a.crmId);
+    const stripped = raw.replace(/^0+/, '') || '0';
+    map[raw] = a.name;
+    map[stripped] = a.name;
+  });
+  return map;
+}
+
+// ── ITSM 쿼리 빌드 ───────────────────────────────────────────────────
+function buildQuery(crmId, days, stateCodes) {
+  const ALL_STATES = ['1','2','9','6','3'];
+  const since = new Date();
+  since.setDate(since.getDate() - Number(days));
+  const sinceStr = since.toISOString().slice(0, 10);
+  console.log('[CSM] buildQuery days=', days, 'sinceStr=', sinceStr);
+  let q = `account.u_sap_crm_bp_number=${crmId}^sys_updated_on>=${sinceStr}`;
+  const excluded = ALL_STATES.filter(s => !stateCodes.includes(s));
+  excluded.forEach(s => { q += `^state!=${s}`; });
+  q += '^ORDERBYDESCsys_updated_on';
+  const params = new URLSearchParams({
+    sysparm_fields: 'number,short_description,state,action_status,priority,sys_created_on,assigned_to,account,sys_id,u_app_component,correlation_display,watch_list,active_escalation',
+    sysparm_limit: '500',
+    sysparm_display_value: 'true'
+  });
+  return `/api/now/table/sn_customerservice_case?sysparm_query=${encodeURIComponent(q)}&${params}`;
+}
+
+// ── MCC 에스컬레이션 상태 = 케이스의 active_escalation 필드 (별도 조회 없음) ──
+// 기존 sc_req_item 조회(checkMccEscalation)는 403(권한없음)으로 항상 false 였고,
+// 30회 병렬 조회로 목록 렌더를 블록하기만 했음 → 제거. normalizeCase 의 mcc_escalated 사용.
+
+// ── Watch list 토글 ─────────────────────────────────────────────────
+async function toggleWatch(caseItem, watchBtn) {
+  if (!myEmail) {
+    await loadMyUser();
+    if (!myEmail) { alert(t('loginError')); return; }
+  }
+  const watching = watchBtn.classList.contains('watching');
+  const currentList = (caseItem.watch_list || '').split(',').map(s => s.trim()).filter(Boolean);
+  let newList;
+  if (watching) {
+    newList = currentList.filter(e => !e.includes(myEmail.split('@')[0]));
+  } else {
+    if (!currentList.includes(myEmail)) currentList.push(myEmail);
+    newList = currentList;
+  }
+  try {
+    const resp = await itsmFetch(`/api/now/table/sn_customerservice_case/${caseItem.sys_id}__PATCH__${JSON.stringify({ watch_list: newList.join(',') })}`);
+    caseItem.watch_list = newList.join(',');
+    if (watching) {
+      watchBtn.classList.remove('watching');
+      watchBtn.title = t('watchAdding');
+    } else {
+      watchBtn.classList.add('watching');
+      watchBtn.title = `${t('watchViewing')}: ${newList.join(', ')}`;
+    }
+  } catch (e) {
+    alert(t('watchUpdateFailed') + ': ' + e.message);
+  }
+}
+
+// ── 렌더: 고객사 리스트 ──────────────────────────────────────────────
+async function renderFavouriteList() {
+  const startKey = selectedOwnerKey;
+
+  await loadFavourites();
+
+  // ⚠️ 탭 변경 감지 → 렌더링 중단
+  if (selectedOwnerKey !== startKey) {
+    console.log(`[renderFavouriteList] 탭 변경 감지, 렌더링 중단`);
+    return;
+  }
+
+  const list = document.getElementById('accountList');
+  const accounts = _favourites.filter(f => f.type !== 'case');
+  const cases = _favourites.filter(f => f.type === 'case');
+
+  // Notifications 탭 숨기기
+  document.getElementById('tabNotifications').classList.add('hidden');
+
+  if (!accounts.length && !cases.length) {
+    list.innerHTML = `<div class="empty-state">${t('favEmpty')}<br><span style="font-size:11px;color:#888">${t('favEmptyHint')}</span></div>`;
+  } else {
+    let html = '';
+    if (accounts.length) {
+      html += `<div class="fav-section-label">${t('favSectionAccount')}</div>`;
+      html += accounts.map(a => {
+        const displayName = a.name.replace(/\s*\([^)]*\)\s*$/, '').trim();
+        return `
+        <div class="account-item" data-crmid="${escHtml(a.crmId)}" data-name="${escHtml(a.name)}">
+          <button class="fav-star-btn" data-crmid="${escHtml(a.crmId)}" title="${t('favRemove')}">⭐</button>
+          <div class="account-info">
+            <div class="account-name">${escHtml(displayName)}</div>
+          </div>
+        </div>`;
+      }).join('');
+    }
+    if (cases.length) {
+      html += `<div class="fav-section-label">${t('favSectionCase')}</div>`;
+      // 저장된 정보로 즉시 렌더
+      html += cases.map(c => {
+        const caseObj = {
+          sys_id: c.sysId, number: c.number, short_description: c.title || '',
+          account: c.account || '', state: c.state || '', state_code: c.state_code || '',
+          priority: c.priority || '', priority_code: c.priority_code || '',
+          mcc_escalated: false, correlation_display: c.correlation_display || '', watch_list: '', assigned_to: '',
+          u_app_component: c.u_app_component || '', created_ago: ''
+        };
+        return buildCaseItemHtml(caseObj, 'fav-case-item');
+      }).join('');
+    }
+    list.innerHTML = html;
+
+    // account 이벤트 바인딩 (즉시)
+    list.querySelectorAll('.account-item:not(.fav-case-item)').forEach(el => {
+      el.addEventListener('click', (e) => {
+        if (e.target.classList.contains('fav-star-btn')) return;
+        if (el.classList.contains('fav-pending-remove')) return;
+        doSearch([el.dataset.crmid], el.dataset.name);
+      });
+    });
+    list.querySelectorAll('.fav-star-btn:not(.fav-case-star)').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const crmId = btn.dataset.crmid;
+        const item = btn.closest('.account-item');
+        if (item.classList.contains('fav-pending-remove')) {
+          item.classList.remove('fav-pending-remove');
+          btn.textContent = '⭐';
+          btn.title = t('favRemove');
+          addFavourite(crmId, item.querySelector('.account-name').textContent);
+        } else {
+          item.classList.add('fav-pending-remove');
+          btn.textContent = '☆';
+          btn.title = t('favUndo');
+          removeFavourite(crmId);
+        }
+      });
+    });
+
+    // case 이벤트 바인딩 (즉시, 저장된 데이터로 이미 렌더된 상태)
+    if (cases.length) {
+      bindFavCaseEvents(list);
+
+      // 백그라운드로 상태값 갱신 (20건씩 청크 병렬 처리)
+      (async () => {
+        const CHUNK = 20;
+        const chunks = [];
+        for (let i = 0; i < cases.length; i += CHUNK) chunks.push(cases.slice(i, i + CHUNK));
+        const allFetched = (await Promise.all(
+          chunks.map(chunk => {
+            const ids = chunk.map(c => c.sysId).join(',');
+            return itsmFetch(
+              `/api/now/table/sn_customerservice_case?sysparm_query=sys_idIN${encodeURIComponent(ids)}&sysparm_fields=sys_id,state,action_status,priority,u_app_component,correlation_display,watch_list,active_escalation&sysparm_display_value=true&sysparm_limit=${chunk.length}`
+            ).then(d => Array.isArray(d?.result) ? d.result : []).catch(() => []);
+          })
+        )).flat();
+
+        allFetched.forEach(raw => {
+          const el = list.querySelector(`.fav-case-item[data-sysid="${raw.sys_id}"]`);
+          if (!el) return;
+          // 저장된 케이스 스냅샷 + 최신 상태값으로 병합해서 재렌더
+          const saved = cases.find(c => c.sysId === raw.sys_id) || {};
+          const caseObj = normalizeCase({
+            sys_id: raw.sys_id,
+            number: saved.number || '',
+            short_description: saved.title || '',
+            account: saved.account || '',
+            state: raw.state,
+            action_status: raw.action_status,
+            priority: raw.priority,
+            u_app_component: raw.u_app_component,
+            watch_list: raw.watch_list,
+            active_escalation: raw.active_escalation,
+            assigned_to: '', sys_created_on: '', correlation_display: getStr(raw.correlation_display) || saved.correlation_display || ''
+          });
+          // outerHTML 교체 후 이벤트 재바인딩
+          el.outerHTML = buildCaseItemHtml(caseObj, 'fav-case-item');
+          // 저장소에도 최신 상태 반영
+          const favIdx = _favourites.findIndex(f => f.type === 'case' && f.sysId === raw.sys_id);
+          if (favIdx >= 0) {
+            _favourites[favIdx].state = getStr(raw.state);
+            _favourites[favIdx].state_code = getStr(raw.state?.value ?? '');
+            _favourites[favIdx].priority = getStr(raw.priority);
+            _favourites[favIdx].priority_code = getStr(raw.priority?.value ?? '');
+            _favourites[favIdx].u_app_component = getStr(raw.u_app_component);
+            if (raw.correlation_display) _favourites[favIdx].correlation_display = getStr(raw.correlation_display);
+          }
+        });
+        saveFavourites();
+        // 상태 업데이트 후 이벤트 재바인딩 — list가 여전히 현재 DOM인지 확인
+        if (document.getElementById('accountList') === list) {
+          bindFavCaseEvents(list);
+        }
+      })();
+    }
+  }
+  showView('account');
+}
+
+function bindFavCaseEvents(list) {
+  list.querySelectorAll('.fav-case-item').forEach(el => {
+    if (el.dataset.bound) return;
+    el.dataset.bound = '1';
+    el.addEventListener('click', async (e) => {
+      if (e.target.classList.contains('case-fav-btn')) return;
+      if (e.target.classList.contains('watch-btn')) return;
+      if (el.classList.contains('fav-pending-remove')) return;
+      const sysId = el.dataset.sysid;
+      el.style.cursor = 'wait';
+      try {
+        const data = await itsmFetch(
+          `/api/now/table/sn_customerservice_case/${sysId}?sysparm_fields=sys_id,number,short_description,state,action_status,priority,sys_created_on,assigned_to,account,u_app_component,correlation_display,watch_list,active_escalation,comments_and_work_notes&sysparm_display_value=all`
+        );
+        const c = normalizeCase(data.result);
+        c._journal = getStr(data.result?.comments_and_work_notes);
+        openDetail(c);
+      } catch (err) {
+        alert(t('caseFetchFailed') + ': ' + err.message);
+      } finally {
+        el.style.cursor = '';
+      }
+    });
+    el.querySelectorAll('.case-fav-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const sysId = btn.dataset.sysid;
+        const item = btn.closest('.case-item');
+        if (item.classList.contains('fav-pending-remove')) {
+          item.classList.remove('fav-pending-remove');
+          btn.textContent = '⭐'; btn.classList.add('active');
+          const favCase = _favourites.find(f => f.type === 'case' && f.sysId === sysId);
+          if (favCase && !isFavouriteCase(sysId)) { _favourites.push(favCase); saveFavourites(); }
+        } else {
+          item.classList.add('fav-pending-remove');
+          btn.textContent = '☆'; btn.classList.remove('active');
+          removeFavouriteCase(sysId);
+        }
+      });
+    });
+  });
+}
+
+async function renderAccountList(crmIds) {
+  // 시작 시점의 selectedOwnerKey 캡처 — 완료 시 비교용
+  const startKey = selectedOwnerKey;
+
+  // Notifications 탭 숨기기
+  document.getElementById('tabNotifications').classList.add('hidden');
+
+  const accounts = await loadKoreaAccounts();
+  const map = buildCrmMap(accounts);
+  // crmId → json 원본 crmId(앞에 0 포함) 역매핑
+  const canonicalMap = {};
+  accounts.forEach(a => {
+    const stripped = String(a.crmId).replace(/^0+/, '') || '0';
+    canonicalMap[stripped] = a.crmId;
+    canonicalMap[a.crmId] = a.crmId;
+  });
+  const seen = new Set();
+  const items = crmIds.map(id => {
+    const canonical = canonicalMap[id] || canonicalMap[String(id).replace(/^0+/, '')] || id;
+    const name = map[String(id).replace(/^0+/, '')] || map[id] || null;
+    return { crmId: canonical, name };
+  }).filter(a => {
+    if (seen.has(a.crmId)) return false;
+    seen.add(a.crmId);
+    return true;
+  });
+
+  // korea-accounts에 없는 항목은 ITSM customer_account에서 name 조회
+  await Promise.all(items.filter(a => !a.name).map(async a => {
+    try {
+      const path = `/api/now/table/customer_account?sysparm_query=u_sap_crm_bp_number=${encodeURIComponent(a.crmId)}&sysparm_fields=name&sysparm_limit=1&sysparm_exclude_reference_link=true`;
+      const resp = await new Promise((resolve, reject) => {
+        browserAPI.runtime.sendMessage({ type: 'ITSM_QUERY', path }, r => {
+          if (r?.ok) resolve(r.data); else reject();
+        });
+      });
+      a.name = resp?.result?.[0]?.name || null;
+    } catch { /* 무시 */ }
+  }));
+
+  // ⚠️ 렌더링 직전 체크: 탭이 바뀌었으면 중단 (다른 탭의 내용이 덮어쓰는 것 방지)
+  if (selectedOwnerKey !== startKey) {
+    console.log(`[renderAccountList] 탭 변경 감지 (${startKey} → ${selectedOwnerKey}), 렌더링 중단`);
+    return;
+  }
+
+  const sorted = items.filter(a => a.name).sort((a, b) => a.name.localeCompare(b.name));
+
+  const list = document.getElementById('accountList');
+  if (!sorted.length) {
+    list.innerHTML = `<div class="empty-state">${t('noAccounts')}</div>`;
+  } else {
+    list.innerHTML = sorted.map(a => {
+      const displayName = a.name.replace(/\s*\([^)]*\)\s*$/, '').trim();
+      const fav = isFavourite(a.crmId);
+      const crmStr = String(a.crmId).replace(/^0+/, '');
+      return `
+      <div class="account-item" data-crmid="${a.crmId}" data-name="${escHtml(a.name)}">
+        <button class="fav-star-btn${fav ? ' active' : ''}" data-crmid="${a.crmId}" title="${fav ? t('favRemove') : t('favAdd')}">${fav ? '⭐' : '☆'}</button>
+        <div class="account-info">
+          <div class="account-name">${escHtml(displayName)}</div>
+          <div class="account-id" style="font-size:11px;color:var(--text-muted)">CRM ${crmStr}</div>
+        </div>
+        <span class="account-arrow">›</span>
+      </div>`;
+    }).join('');
+    list.querySelectorAll('.account-item').forEach(el => {
+      el.addEventListener('click', (e) => {
+        if (e.target.classList.contains('fav-star-btn')) return;
+        const crmId = el.dataset.crmid;
+        const name = el.dataset.name;
+        doSearch([crmId], name);
+      });
+    });
+    list.querySelectorAll('.fav-star-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const crmId = btn.dataset.crmid;
+        const item = btn.closest('.account-item');
+        const name = item.dataset.name;
+        if (isFavourite(crmId)) {
+          removeFavourite(crmId);
+          btn.textContent = '☆';
+          btn.classList.remove('active');
+          btn.title = t('favAdd');
+        } else {
+          addFavourite(crmId, name);
+          btn.textContent = '⭐';
+          btn.classList.add('active');
+          btn.title = t('favRemove');
+        }
+      });
+    });
+  }
+  showView('account');
+}
+
+function escHtml(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── 렌더: 케이스 리스트 ─────────────────────────────────────────────
+function buildCaseItemHtml(c, extraClass = '') {
+  const watching = myEmail && (c.watch_list || '').includes(myEmail.split('@')[0]);
+  const watchTitle = watching ? `${t('watchViewing')} (${c.watch_list})` : t('watchAdding');
+  const isFavCase = isFavouriteCase(c.sys_id);
+  const stateChanged = isCaseStateChanged(c.sys_id, c.state_code);
+  const stateBadgeHtml = stateChanged
+    ? `<span class="badge badge-state-changed">${escHtml(c.state)}</span>`
+    : stateBadge(c.state_code, c.state);
+  return `
+  <div class="case-item${extraClass ? ' ' + extraClass : ''}${stateChanged ? ' state-changed' : ''}" data-sysid="${c.sys_id}">
+    <button class="case-fav-btn${isFavCase ? ' active' : ''}" title="Favourite" data-sysid="${c.sys_id}">${isFavCase ? '⭐' : '☆'}</button>
+    <div class="case-main">
+      <div class="case-header">
+        <span class="case-number">${escHtml(c.number)}${c.correlation_display ? ` <span class="corr-num">${escHtml(c.correlation_display)}</span>` : ''}</span>
+        <div class="case-badges">
+          ${priorityBadge(c.priority_code, c.priority)}
+          ${stateBadgeHtml}
+          ${c.mcc_escalated ? '<span class="mcc-badge">⚡ MCC</span>' : ''}
+          <button class="watch-btn ${watching ? 'watching' : ''}" title="${escHtml(watchTitle)}" data-sysid="${c.sys_id}">👁</button>
+        </div>
+      </div>
+      <div class="case-account">${escHtml(c.account)}</div>
+      <div class="case-desc">${escHtml(c.short_description)}</div>
+      <div class="case-meta">
+        <span class="case-component">${escHtml(c.u_app_component)}</span>
+        <span>${escHtml(c.created_ago || '')}</span>
+        ${c.assigned_to ? `<span>👤 ${escHtml(c.assigned_to)}</span>` : ''}
+      </div>
+    </div>
+  </div>`;
+}
+
+async function renderCaseList(cases) {
+  const list = document.getElementById('caseList');
+  if (!cases.length) {
+    showView('empty');
+    return;
+  }
+
+  list.innerHTML = cases.map(c => buildCaseItemHtml(c)).join('');
+
+  // 이벤트 위임: list 컨테이너에 한 번만 등록 (outerHTML 교체 후에도 살아있음)
+  if (!list._delegated) {
+    list._delegated = true;
+    list.addEventListener('click', async (e) => {
+      const btn = e.target.closest('.watch-btn');
+      const favBtn = e.target.closest('.case-fav-btn');
+      const item = e.target.closest('.case-item');
+      if (!item) return;
+      const sysId = item.dataset.sysid;
+      const c = currentCases.find(x => x.sys_id === sysId);
+
+      if (btn) {
+        e.stopPropagation();
+        if (c) await toggleWatch(c, btn);
+        return;
+      }
+      if (favBtn) {
+        e.stopPropagation();
+        if (!c) return;
+        if (isFavouriteCase(sysId)) {
+          await removeFavouriteCase(sysId);
+          favBtn.textContent = '☆';
+          favBtn.classList.remove('active');
+        } else {
+          await addFavouriteCase(c);
+          favBtn.textContent = '⭐';
+          favBtn.classList.add('active');
+        }
+        return;
+      }
+      if (c) openDetail(c);
+    });
+  }
+
+  showView('cases');
+}
+
+// ── 뷰 전환 ──────────────────────────────────────────────────────────
+let _currentView = 'account'; // 'account' | 'cases' | 'loading' | 'empty' | 'error'
+function showView(mode) {
+  _currentView = mode;
+  document.getElementById('accountList').classList.toggle('hidden', mode !== 'account');
+  document.getElementById('skeletonList').classList.toggle('hidden', mode !== 'loading');
+  document.getElementById('caseList').classList.toggle('hidden', mode !== 'cases');
+  document.getElementById('emptyState').classList.toggle('hidden', mode !== 'empty');
+  document.getElementById('errorState').classList.toggle('hidden', mode !== 'error');
+  // 헤더 ← 버튼: 고객사 목록이 아닐 때 표시, 로고는 반대로
+  const isAccount = mode === 'account';
+  document.getElementById('btnBackMain').classList.toggle('hidden', isAccount);
+  document.getElementById('hdrLogo').classList.toggle('hidden', !isAccount);
+  if (isAccount) {
+    document.getElementById('hdrTitle').textContent = 'CSM Cases';
+    document.getElementById('btnAddFavourite').classList.add('hidden');
+  }
+}
+
+// ── 조회 ─────────────────────────────────────────────────────────────
+// 통합 검색: 고객사 카드 + 케이스 카드 혼합 표시
+// - 숫자: korea-accounts CRM ID 매칭 → 고객사 카드, 동시에 케이스 번호 조회 → 케이스 카드
+// - 텍스트: ITSM customer_account name 검색 → 고객사 카드, short_description 검색 → 케이스 카드
+async function searchUnified(q) {
+  console.log('[CSM] searchUnified 호출 q=', q);
+  showView('loading');
+  const stripped = q.replace(/^0+/, '');
+  const isNumeric = /^\d+$/.test(q);
+
+  const localAccounts = await loadKoreaAccounts();
+  const accountHits = isNumeric
+    ? localAccounts.filter(a => String(a.crmId).replace(/^0+/, '') === stripped)
+    : localAccounts.filter(a => a.name.toLowerCase().includes(q.toLowerCase()));
+
+  console.log('[CSM] accountHits=', accountHits.length, accountHits.map(a => a.name));
+
+  // 케이스 조회 후 통합 표시 (고객사 + 케이스)
+  try {
+    const fields = 'sys_id,number,short_description,state,action_status,priority,sys_created_on,assigned_to,account,u_app_component,correlation_display,watch_list,active_escalation';
+    let caseHits = [];
+
+    if (isNumeric) {
+      // 숫자 입력 → 여러 패턴 병렬 시도
+      const queries = [];
+
+      // 1) correlation_display (6~7자리 케이스 번호)
+      if (/^\d{6,7}$/.test(q)) {
+        queries.push(`correlation_display=${encodeURIComponent(q + '/2026')}`);
+        queries.push(`correlation_display=${encodeURIComponent(q + '/2025')}`);
+      }
+
+      // 2) number LIKE (CS번호 부분 매칭)
+      queries.push(`numberLIKE${encodeURIComponent(q)}`);
+
+      // 3) account.name 부분 매칭 (숫자가 고객사명에 포함된 경우)
+      if (accountHits.length) {
+        queries.push(`account.nameLIKE${encodeURIComponent(accountHits[0].name.split(' ')[0])}`);
+      }
+
+      // 병렬 실행
+      console.log('[CSM] searchUnified 쿼리들:', queries);
+      const results = await Promise.all(
+        queries.map(snQuery =>
+          itsmFetch(`/api/now/table/sn_customerservice_case?sysparm_query=${snQuery}&sysparm_fields=${fields}&sysparm_display_value=true&sysparm_limit=20`)
+            .then(d => {
+              console.log(`[CSM] 쿼리 성공: ${snQuery.slice(0, 50)} → ${d?.result?.length || 0}건`);
+              return (d?.result || []).map(normalizeCase);
+            })
+            .catch(e => {
+              console.warn(`[CSM] 쿼리 실패: ${snQuery.slice(0, 50)}`, e.message);
+              return [];
+            })
+        )
+      );
+      console.log('[CSM] 병렬 조회 완료, 총', results.flat().length, '건');
+
+      // 중복 제거
+      const seen = new Set();
+      caseHits = results.flat().filter(c => {
+        if (seen.has(c.sys_id)) return false;
+        seen.add(c.sys_id);
+        return true;
+      });
+    } else {
+      // 텍스트 입력 → short_description 검색
+      const data = await itsmFetch(
+        `/api/now/table/sn_customerservice_case?sysparm_query=short_descriptionLIKE${encodeURIComponent(q)}&sysparm_fields=${fields}&sysparm_display_value=true&sysparm_limit=20`
+      );
+      caseHits = (data?.result || []).map(normalizeCase);
+    }
+
+    renderUnified(accountHits, caseHits, q);
+  } catch (e) {
+    console.warn('[CSM] 케이스 조회 실패', e.message);
+  }
+}
+
+function renderUnified(accountHits, caseHits, q) {
+  const list = document.getElementById('accountList');
+
+  if (!accountHits.length && !caseHits.length) {
+    document.getElementById('emptyState').textContent = `${t('searchNoResult')}: ${q}`;
+    showView('empty');
+    return;
+  }
+
+  let html = '';
+  if (accountHits.length) {
+    html += `<div class="search-section-label">${t('searchSectionAccount')}</div>`;
+    html += accountHits.map(a => {
+      const displayName = a.name.replace(/\s*\([^)]*\)\s*$/, '').trim();
+      const crmStr = String(a.crmId).replace(/^0+/, '');
+      const fav = isFavourite(a.crmId);
+      return `<div class="account-item search-account-item" data-crmid="${escHtml(String(a.crmId))}" data-name="${escHtml(a.name)}">
+        <button class="fav-star-btn${fav ? ' active' : ''}" data-crmid="${escHtml(String(a.crmId))}" title="${fav ? t('favRemove') : t('favAdd')}">${fav ? '⭐' : '☆'}</button>
+        <div class="account-info">
+          <div class="account-name">${escHtml(displayName)}</div>
+          <div class="account-id" style="font-size:11px;color:var(--text-muted)">CRM ${crmStr}</div>
+        </div>
+        <span class="account-arrow">›</span>
+      </div>`;
+    }).join('');
+  }
+  if (caseHits.length) {
+    html += `<div class="search-section-label">${t('searchSectionCase')}</div>`;
+    html += caseHits.map(c => buildCaseItemHtml(c)).join('');
+  }
+
+  list.innerHTML = html;
+  showView('account');
+
+  list.querySelectorAll('.search-account-item').forEach(el => {
+    el.addEventListener('click', e => {
+      if (e.target.classList.contains('fav-star-btn')) return;
+      doSearch([el.dataset.crmid], el.dataset.name);
+    });
+    el.querySelector('.fav-star-btn')?.addEventListener('click', e => {
+      e.stopPropagation();
+      const crmId = e.target.dataset.crmid;
+      const name = el.dataset.name;
+      if (isFavourite(crmId)) { removeFavourite(crmId); e.target.textContent = '☆'; e.target.classList.remove('active'); }
+      else { addFavourite(crmId, name); e.target.textContent = '⭐'; e.target.classList.add('active'); }
+    });
+  });
+
+  list.querySelectorAll('.case-item').forEach(el => {
+    el.addEventListener('click', async e => {
+      if (e.target.closest('.case-fav-btn') || e.target.closest('.watch-btn')) return;
+      const sysId = el.dataset.sysid;
+      el.style.cursor = 'wait';
+      try {
+        const data = await itsmFetch(
+          `/api/now/table/sn_customerservice_case/${sysId}?sysparm_fields=sys_id,number,short_description,state,action_status,priority,sys_created_on,assigned_to,account,u_app_component,correlation_display,watch_list,active_escalation,comments_and_work_notes&sysparm_display_value=all`
+        );
+        const c = normalizeCase(data.result);
+        c._journal = getStr(data.result?.comments_and_work_notes);
+        openDetail(c);
+      } catch (err) { alert(t('caseFetchFailed') + ': ' + err.message); }
+      finally { el.style.cursor = ''; }
+    });
+  });
+}
+
+async function doSearchOrCase(q) { return searchUnified(q); }
+
+
+// CS번호 / 케이스번호 직접 조회 → 케이스 목록 + 클릭 가능
+async function searchCaseDirectly(q) {
+  console.log('[CSM] searchCaseDirectly 호출 q=', q);
+  const input = q.trim();
+
+  // 🚨 6~7자리 숫자는 무조건 correlation_display (케이스 번호) — 최우선 처리
+  if (/^\d{6,7}$/.test(input)) {
+    console.log('[CSM] searchCaseDirectly: 6~7자리 → correlation_display 조회');
+    showView('loading');
+    const fields = 'sys_id,number,short_description,state,action_status,priority,sys_created_on,assigned_to,account,u_app_component,correlation_display,watch_list,active_escalation';
+    let rows = [];
+    try {
+      // 2026 먼저 시도
+      const data2026 = await itsmFetch(
+        `/api/now/table/sn_customerservice_case?sysparm_query=correlation_display=${encodeURIComponent(input + '/2026')}&sysparm_fields=${fields}&sysparm_display_value=true&sysparm_limit=20`
+      );
+      rows = Array.isArray(data2026?.result) ? data2026.result : [];
+
+      // 없으면 2025 시도
+      if (!rows.length) {
+        const data2025 = await itsmFetch(
+          `/api/now/table/sn_customerservice_case?sysparm_query=correlation_display=${encodeURIComponent(input + '/2025')}&sysparm_fields=${fields}&sysparm_display_value=true&sysparm_limit=20`
+        );
+        rows = Array.isArray(data2025?.result) ? data2025.result : [];
+      }
+
+      if (!rows.length) {
+        document.getElementById('emptyState').textContent = `${t('searchNoResult')}: ${input}`;
+        showView('empty');
+        return;
+      }
+
+      const cases = rows.map(normalizeCase);
+      _rawCases = cases;
+      currentCases = cases;
+      _lastTargets = null;
+      const titleEl = document.getElementById('hdrTitle');
+      if (titleEl) titleEl.textContent = input;
+      await renderCaseList(cases);
+      document.getElementById('resultCount').textContent = `${cases.length}건`;
+    } catch (e) {
+      showError(t('caseFetchFailed'), e.message);
+    }
+    return;
+  }
+
+  let snQuery;
+  if (/^CS/i.test(input)) {
+    snQuery = `number=${encodeURIComponent(input.toUpperCase())}`;
+  } else if (/^\d{14,}$/.test(input)) {
+    // CS 없는 14자리 이상 순수숫자 → CS 붙여서 exact 조회
+    snQuery = `number=CS${encodeURIComponent(input)}`;
+  } else if (/^\d+\/\d{4}$/.test(input)) {
+    // 연도형(1209589/2026, 01209589/2026) → correlation_display 조회
+    snQuery = `correlation_display=${encodeURIComponent(input)}`;
+  } else if (/^\d/.test(input)) {
+    // 그 외 숫자 → numberLIKE (부분 번호)
+    snQuery = `numberLIKE${encodeURIComponent(input)}`;
+  } else {
+    // 텍스트 키워드 → short_description LIKE
+    snQuery = `short_descriptionLIKE${encodeURIComponent(input)}`;
+  }
+  showView('loading');
+  try {
+    const fields = 'sys_id,number,short_description,state,action_status,priority,sys_created_on,assigned_to,account,u_app_component,correlation_display,watch_list,active_escalation';
+    const data = await itsmFetch(
+      `/api/now/table/sn_customerservice_case?sysparm_query=${snQuery}&sysparm_fields=${fields}&sysparm_display_value=true&sysparm_limit=20`
+    );
+    const rows = Array.isArray(data?.result) ? data.result : [];
+    if (!rows.length) {
+      document.getElementById('emptyState').textContent = `${t('searchNoResult')}: ${input}`;
+      showView('empty');
+      return;
+    }
+    const cases = rows.map(normalizeCase);
+    _rawCases = cases;
+    currentCases = cases;
+    _lastTargets = null; // 고객사 기반 아님
+    // 헤더에 검색어 표시
+    const titleEl = document.getElementById('hdrTitle');
+    if (titleEl) titleEl.textContent = input;
+    await renderCaseList(cases);
+    document.getElementById('resultCount').textContent = `${cases.length}건`;
+  } catch (e) {
+    showError(t('caseFetchFailed'), e.message);
+  }
+}
+
+async function doSearch(crmIds, overrideAccountName) {
+  console.log('[CSM] doSearch 시작 crmIds=', crmIds);
+  showView('loading');
+  document.getElementById('resultCount').textContent = '';
+
+  const accounts = await loadKoreaAccounts();
+  const map = buildCrmMap(accounts);
+  const days = document.getElementById('periodSelect').value;
+  const ALL_STATES = ['1','2','9','6','3'];
+
+  const seen = new Set();
+  const targets = crmIds.map(id => ({
+    crmId: id,
+    name: overrideAccountName || map[String(id).replace(/^0+/, '')] || map[id] || null,
+    erpId: null  // ITSM customer_account 조회로 채움
+  }));
+
+  // korea-accounts.json에 없는 CRM ID → ITSM customer_account에서 name+erpId 조회
+  await Promise.all(targets.map(async t => {
+    try {
+      const path = `/api/now/table/customer_account?sysparm_query=u_sap_crm_bp_number=${encodeURIComponent(t.crmId)}&sysparm_fields=name,number&sysparm_limit=1&sysparm_exclude_reference_link=true`;
+      const resp = await new Promise((resolve, reject) => {
+        browserAPI.runtime.sendMessage({ type: 'ITSM_QUERY', path }, r => {
+          if (r?.ok) resolve(r.data);
+          else reject(new Error(r?.error || ''));
+        });
+      });
+      const row = resp?.result?.[0];
+      if (row) {
+        if (!t.name) t.name = row.name || null;
+        t.erpId = row.number || null;
+      }
+    } catch { /* 조회 실패는 무시 */ }
+  }));
+
+  const uniqueTargets = [];
+  const seenNames = new Set();
+  for (const t of targets) {
+    if (!t.name || seenNames.has(t.name)) continue;
+    seenNames.add(t.name);
+    uniqueTargets.push(t);
+  }
+  const finalTargets = uniqueTargets;
+
+  if (!finalTargets.length) {
+    showError(
+      t('noMappedAccount'),
+      `CRM ID ${crmIds.join(', ')} ${t('crmIdNotFound')}`
+    );
+    return;
+  }
+
+  _lastTargets = finalTargets;
+
+  setProgress(`${t('itsmFetching')} (${finalTargets.map(t => t.name).join(', ')})`);
+  try {
+    const results = await Promise.all(
+      finalTargets.map(t =>
+        itsmFetch(buildQuery(t.crmId, days, ALL_STATES))
+          .then(d => {
+            const rows = d.result || [];
+            return rows.map(normalizeCase);
+          })
+          .catch(e => {
+            console.error(`[CSM] ${t.name} 조회 실패:`, e.message);
+            return { _error: true, name: t.name, msg: e.message };
+          })
+      )
+    );
+
+    // 에러 분리
+    const errors = results.filter(r => r._error);
+    const rows = results.filter(r => !r._error).flat();
+
+    if (errors.length && !rows.length) {
+      // 전부 실패
+      showError(
+        t('itsmFetchFailed'),
+        errors.map(e => `${e.name}: ${e.msg}`).join('\n')
+      );
+      return;
+    }
+    if (errors.length) {
+      // 일부 실패 — 결과 상단에 경고 표시
+      document.getElementById('resultCount').textContent =
+        `${t('itsmPartialFail')} (${errors.map(e => e.name).join(', ')})`;
+    }
+
+    let flat = rows;
+    const deduped = flat.filter((c, i, a) => a.findIndex(x => x.sys_id === c.sys_id) === i)
+      .sort((a, b) => b.sys_created_on.localeCompare(a.sys_created_on));
+
+    _rawCases = deduped; // state/컴포넌트 필터 클라이언트에서 처리
+    if (errors.length) {
+      document.getElementById('resultCount').textContent =
+        `${t('itsmPartialFail')} (${errors.map(e => e.name).join(', ')})`;
+    }
+
+    setProgress('');
+    // 헤더에 고객사명 표시
+    const titleEl = document.getElementById('hdrTitle');
+    if (titleEl) {
+      if (finalTargets.length === 1) {
+        const t = finalTargets[0];
+        const cleanName = t.name ? t.name.replace(/\s*\([^)]*\)\s*$/, '').trim() : null;
+        const crmStr = String(t.crmId).replace(/^0+/, '');
+        const erpStr = t.erpId ? String(t.erpId).replace(/^0+/, '') : null;
+        const idPart = erpStr ? `CRM:${crmStr} / ERP:${erpStr}` : `CRM:${crmStr}`;
+        titleEl.textContent = cleanName ? `${cleanName} (${idPart})` : idPart;
+      } else {
+        titleEl.textContent = finalTargets.map(t => t.name || t.crmId).join(', ');
+      }
+    }
+    applyComponentFilter(); // comp 필터 적용 후 렌더
+    updateFavouriteBtn();   // Favourite 버튼 상태 갱신
+  } catch (e) {
+    setProgress('');
+    showError(t('itsmError'), e.stack || e.message);
+  }
+}
+
+// ── 컴포넌트 필터 (클라이언트 재필터 — 서버 재조회 없음) ──────────────
+async function applyComponentFilter() {
+  const STATE_TEXT = { '1':'New', '2':'In progress', '9':'Awaiting Info', '6':'Resolved', '3':'Closed' };
+  const stateCodes = [...document.querySelectorAll('.status-chk:checked')].map(c => c.value);
+  const stateLabels = stateCodes.map(c => STATE_TEXT[c]).filter(Boolean);
+  const compKeys = [...document.querySelectorAll('.comp-chk:checked')].map(c => c.value);
+  const allComps = compKeys.includes('ALL');
+  const prefixes = allComps ? null : compKeys.flatMap(k => COMPONENTS[k] || []);
+  let filtered = _rawCases;
+  if (stateLabels.length) filtered = filtered.filter(c => stateLabels.includes(c.state));
+  if (prefixes?.length) filtered = filtered.filter(c => prefixes.some(p => c.u_app_component.startsWith(p)));
+  currentCases = filtered;
+  if (!document.getElementById('resultCount').textContent.startsWith('⚠️')) {
+    document.getElementById('resultCount').textContent = `${filtered.length}건`;
+  }
+  if (!myEmail) await loadMyUser().catch(() => {});
+  renderCaseList(filtered);
+}
+
+function showError(msg, detail) {
+  const el = document.getElementById('errorState');
+  el.innerHTML = `<div class="error-title">⚠️ ${escHtml(msg)}</div>`
+    + (detail ? `<pre class="error-detail">${escHtml(detail)}</pre>` : '')
+    + `<button class="btn-ghost btn-sm" style="margin-top:8px" onclick="location.reload()">${t('retry')}</button>`;
+  showView('error');
+  console.error('[CSM]', msg, detail || '');
+}
+
+function setProgress(msg) {
+  // 스켈레톤 위에 진행 메시지 오버레이
+  const el = document.getElementById('progressMsg');
+  if (el) { el.textContent = msg; el.classList.toggle('hidden', !msg); }
+}
+
+// ── 케이스 상세 ──────────────────────────────────────────────────────
+async function openDetail(c) {
+  selectedCase = c;
+  markCaseSeen(c.sys_id, c.state_code); // 읽음 처리 — 이후 상태 변경 감지 기준
+
+  // 선택 표시
+  document.querySelectorAll('.case-item').forEach(el => {
+    el.classList.toggle('selected', el.dataset.sysid === c.sys_id);
+  });
+
+  document.getElementById('detailNumber').textContent = c.number + (c.correlation_display ? ` / ${c.correlation_display}` : '');
+  document.getElementById('detailDesc').textContent = c.short_description;
+  document.getElementById('detailAccount').textContent = c.account;
+  document.getElementById('detailState').textContent = c.state;
+  document.getElementById('detailPriority').textContent = c.priority;
+  document.getElementById('detailAssignee').textContent = c.assigned_to;
+  document.getElementById('detailCreated').textContent = c.sys_created_on;
+  document.getElementById('detailComponent').textContent = c.u_app_component;
+
+  // Favourite 버튼 상태 동기화
+  updateFavCaseBtn();
+  _lastAiInsight = null;
+  document.getElementById('aiBusy').classList.add('hidden');
+  document.getElementById('aiStructured').classList.add('hidden');
+  document.getElementById('aiPlaceholder').classList.remove('hidden');
+  document.querySelectorAll('#aiStructured .ai-block-body').forEach(el => el.textContent = '');
+
+  // 참조 링크 초기화 (ServiceNow 원문은 항상 표시)
+  renderRefs(c, '');
+
+  // 메모 초기화 (ITSM 메모는 입력란만 비움 — 기존 로컬 저장 제거)
+  document.getElementById('memoInput').value = '';
+  const memoHistEl = document.getElementById('memoHistory');
+  if (memoHistEl) memoHistEl.classList.add('hidden');
+
+  // 탭 초기화 (Overview). Timeline 은 AI 분석 실행 시 생성되므로 안내 문구 표시
+  switchDetailTab('overview');
+  document.getElementById('timelineList').innerHTML = '';
+  document.getElementById('timelineEmpty').classList.remove('hidden');
+
+  // 패널 열기
+  const panel = document.getElementById('detailPanel');
+  panel.classList.remove('hidden');
+  requestAnimationFrame(() => panel.classList.add('open'));
+
+  // 상세 단건 조회 (journal + 참조 필드) — 비동기, 완료 시 참조/타임라인 갱신
+  loadCaseDetail(c);
+}
+
+// 상세 단건 조회: 상태값 + journal + INC/KBA/SimCat 필드
+async function loadCaseDetail(c) {
+  document.getElementById('timelineBusy').classList.remove('hidden');
+  try {
+    const fields = [
+      'sys_id','number','comments_and_work_notes','u_info_from_correction',
+      'state','action_status','priority','assigned_to','account','u_app_component',
+      'correlation_id','correlation_display','u_bcp_link','u_simcat_link','knowledge','watch_list','active_escalation'
+    ].join(',');
+    const data = await itsmFetch(
+      `/api/now/table/sn_customerservice_case/${c.sys_id}?sysparm_fields=${fields}&sysparm_display_value=true`
+    );
+    const rec = data?.result || {};
+    const journal = getStr(rec.comments_and_work_notes);
+
+    // 최신 상태값으로 selectedCase 갱신 + UI 반영
+    const fresh = normalizeCase(rec);
+    c.state = fresh.state; c.state_code = fresh.state_code;
+    c.priority = fresh.priority; c.priority_code = fresh.priority_code;
+    c.assigned_to = fresh.assigned_to;
+    c.u_app_component = fresh.u_app_component;
+    c.watch_list = fresh.watch_list;
+    c.mcc_escalated = fresh.mcc_escalated;
+    document.getElementById('detailState').textContent = c.state;
+    document.getElementById('detailPriority').textContent = c.priority;
+    document.getElementById('detailAssignee').textContent = c.assigned_to;
+    document.getElementById('detailComponent').textContent = c.u_app_component;
+    markCaseSeen(c.sys_id, c.state_code); // 최신 상태로 읽음 기록 갱신
+    const listItem = document.querySelector(`.case-item[data-sysid="${c.sys_id}"]`);
+    if (listItem) {
+      const isFavItem = listItem.classList.contains('fav-case-item');
+      listItem.outerHTML = buildCaseItemHtml(c, isFavItem ? 'fav-case-item' : '');
+      // fav-case-item은 outerHTML 교체로 이벤트가 사라지므로 재바인딩
+      if (isFavItem) {
+        const list = document.getElementById('accountList');
+        if (document.getElementById('accountList') === list) bindFavCaseEvents(list);
+      }
+    }
+
+    c._detail = rec;
+    c._journal = journal;
+
+    // Favourite 케이스면 lastState에 저장 (다음 변경 감지용 스냅샷)
+    if (isFavouriteCase(c.sys_id)) {
+      const { lastState } = await browserAPI.storage.local.get('lastState') || {};
+      const state = lastState || {};
+      state[c.number] = {
+        state: c.state,
+        priority: c.priority,
+        journal: journal,
+        updatedAt: new Date().toISOString()
+      };
+      await browserAPI.storage.local.set({ lastState: state });
+    }
+
+    // 담당자 이메일 조회 (복사 버튼용)
+    const assignedLink = typeof rec.assigned_to?.link === 'string' ? rec.assigned_to.link : null;
+    if (assignedLink && !c._assigneeEmail) {
+      // assigned_to.link는 절대 URL — ITSM_BASE 부분 제거 후 path만 사용
+      const linkPath = assignedLink.startsWith(ITSM_BASE)
+        ? assignedLink.slice(ITSM_BASE.length)
+        : assignedLink.replace(/^https?:\/\/[^/]+/, '');
+      itsmFetch(`${linkPath}?sysparm_fields=email&sysparm_display_value=true`).then(r => {
+        c._assigneeEmail = getStr(r?.result?.email);
+      }).catch(() => {});
+    }
+    renderRefs(c, journal, getStr(rec.u_info_from_correction));
+    renderMemoHistory(journal);
+    // 상세 로드 완료 후 AI 분석 자동 실행 (1회, 같은 언어 결과 있으면 스킵)
+    const lang = _uiLang;
+    if (!_lastAiInsight || _lastAiLang !== lang) runAiInsight();
+    // Timeline 은 AI 분석(runAiInsight) 이 생성. journal 원문은 _journal 에만 보관.
+  } catch (e) {
+    console.warn('[CSM] 상세 조회 실패:', e.message);
+    document.getElementById('timelineEmpty').textContent = t('timelineLoadFailed') + ': ' + e.message;
+    document.getElementById('timelineEmpty').classList.remove('hidden');
+  } finally {
+    document.getElementById('timelineBusy').classList.add('hidden');
+  }
+}
+
+// ── 참조 링크 렌더 (ServiceNow / INC / KBA / SimCat) ──────────────────
+function renderRefs(c, rawJournal, correctionInfo) {
+  const rec = c._detail || {};
+  const refs = [];
+
+  // ServiceNow 원문 (sys_id 기반 — 생성 아님)
+  refs.push({
+    label: 'ServiceNow',
+    title: c.number,
+    url: `${ITSM_BASE}/now/cwf/agent/record/sn_customerservice_case/${c.sys_id}`
+  });
+
+  // INC (BCP) — u_bcp_link 우선, 없으면 correlation_id로 조립
+  const bcpLink = getStr(rec.u_bcp_link);
+  const corrId = getStr(rec.correlation_id);
+  const corrDisp = getStr(rec.correlation_display) || c.correlation_display;
+  const incTitle = corrDisp || corrId || '';
+  if (bcpLink && incTitle) {
+    refs.push({ label: 'BCP Case', title: incTitle, url: bcpLink, desc: t('bcpDesc') });
+  } else if (corrId && /^\d+$/.test(corrId)) {
+    refs.push({
+      label: 'BCP Case', title: incTitle || corrId,
+      url: `https://support.bss.net.sap/sap/support/message/${corrId}`,
+      desc: t('bcpDesc')
+    });
+  }
+
+  // KBA / SAP Note — journal 본문의 me.sap.com/notes 링크 추출
+  extractNoteLinks(rawJournal).forEach(n => {
+    const noteNum = n.url.match(/\/notes\/(\d+)/)?.[1] || '';
+    const noteNumTrimmed = noteNum.replace(/^0+/, '') || noteNum;
+    const titleIsUrl = n.title === n.url || n.title.startsWith('http');
+    const titleIsNum = /^\d+$/.test(n.title.trim());
+    let display;
+    if (titleIsUrl || titleIsNum) {
+      display = noteNumTrimmed;
+    } else {
+      display = `${noteNumTrimmed} - ${n.title.replace(/^\d+ - /, '').trim()}`;
+    }
+    refs.push({ label: t('kbaLabel'), title: display, url: n.url });
+  });
+
+  // Jira — journal + u_info_from_correction 에서 PROJECT-1234 형태 추출
+  const jiraKeys = new Set();
+  const jiraRe = /\b([A-Z][A-Z0-9]{1,9}-\d+)\b/g;
+  const plainJournal = (rawJournal || '').replace(/<[^>]+>/g, ' ');
+  const plainCorrection = (correctionInfo || '').replace(/<[^>]+>/g, ' ');
+  let m;
+  for (const text of [plainJournal, plainCorrection]) {
+    jiraRe.lastIndex = 0;
+    while ((m = jiraRe.exec(text)) !== null) {
+      if (!/^\d+$/.test(m[1].split('-')[0])) jiraKeys.add(m[1]);
+    }
+  }
+  jiraKeys.forEach(key => {
+    refs.push({ label: 'Jira', title: key, url: `https://jira.tools.sap/browse/${key}` });
+  });
+
+  const box = document.getElementById('detailRefs');
+  box.innerHTML = refs.map((r, i) => `
+    <div class="ref-row" data-i="${i}">
+      <span class="ref-label"${r.desc ? ` title="${escHtml(r.desc)}"` : ''}>${escHtml(r.label)}</span>
+      <a class="ref-link" href="${escHtml(r.url)}" target="_blank" title="${escHtml(r.url)}">${escHtml(r.title)}</a>
+      <button class="copy-btn ref-copy" title="${t('copyLink')}"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M11 2H5a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1zM5 1h6a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2z"/><path d="M3 4H2a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-1H8v1H2V5h1V4z"/></svg></button>
+    </div>`).join('');
+
+  box.querySelectorAll('.ref-row').forEach((row, i) => {
+    attachCopy(row.querySelector('.ref-copy'), () => refs[i].url);
+  });
+}
+
+// ── AI 타임라인 렌더 ──────────────────────────────────────────────────
+// AI 서버가 생성한 timeline 배열 [{date, summary, actor}] 을 카드로 렌더.
+function actorInfo(actor) {
+  const a = (actor || '').trim();
+  const customerVals = new Set(['고객', 'Customer', '客户', 'お客様']);
+  const bothVals = new Set(['양측', 'Both', '双方', '双方']);
+  if (customerVals.has(a)) return { cls: 'tl-customer', icon: '👤', label: t('actorCustomer') };
+  if (bothVals.has(a)) return { cls: 'tl-external', icon: '🔁', label: t('actorBoth') };
+  return { cls: 'tl-external', icon: '📨', label: 'SAP' };
+}
+
+function renderAiTimeline(timeline) {
+  const list = document.getElementById('timelineList');
+  const empty = document.getElementById('timelineEmpty');
+  const entries = Array.isArray(timeline) ? timeline : [];
+  if (!entries.length) {
+    list.innerHTML = '';
+    document.getElementById('timelineHeader').classList.add('hidden');
+    empty.textContent = t('timelineEmpty');
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+  const snUrl = selectedCase ? `${ITSM_BASE}/now/cwf/agent/record/sn_customerservice_case/${selectedCase.sys_id}` : '';
+  const cards = entries.map(e => {
+    const ai = actorInfo(e.actor);
+    return `
+    <div class="tl-card ${ai.cls}">
+      <div class="tl-head">
+        <span class="tl-type">${ai.icon} ${escHtml(ai.label)}</span>
+        <span class="tl-time">${escHtml(e.date || '')}</span>
+      </div>
+      <div class="tl-body">${escHtml(e.summary || '')}</div>
+    </div>`;
+  }).join('');
+  const footer = snUrl
+    ? `<div class="tl-footer"><a class="ref-link" href="${escHtml(snUrl)}" target="_blank">${t('tlViewFull')}</a></div>`
+    : '';
+  list.innerHTML = cards + footer;
+
+  const header = document.getElementById('timelineHeader');
+  header.classList.remove('hidden');
+  attachCopy(document.getElementById('btnCopyTimeline'), () =>
+    entries.map(e => `[${e.date || ''}] (${e.actor || ''}) ${e.summary || ''}`).join('\n')
+  );
+}
+
+// ── 상세 탭 전환 ──────────────────────────────────────────────────────
+let _activeDetailTab = 'overview';
+function switchDetailTab(tab) {
+  _activeDetailTab = tab;
+  document.querySelectorAll('.detail-tab').forEach(b =>
+    b.classList.toggle('active', b.dataset.tab === tab));
+  document.getElementById('tabOverview').classList.toggle('hidden', tab !== 'overview');
+  document.getElementById('tabTimeline').classList.toggle('hidden', tab !== 'timeline');
+  document.getElementById('tabAttachments').classList.toggle('hidden', tab !== 'attachments');
+  if (tab === 'attachments' && selectedCase) loadAttachments(selectedCase.sys_id);
+}
+
+function closeDetail() {
+  const panel = document.getElementById('detailPanel');
+  panel.classList.remove('open');
+  setTimeout(() => panel.classList.add('hidden'), 260);
+  selectedCase = null;
+  _attachSysId = null;
+  _lastAiInsight = null;
+  _lastAiLang = null;
+  document.querySelectorAll('.case-item').forEach(el => el.classList.remove('selected'));
+}
+
+// ── 첨부파일 탭 ───────────────────────────────────────────────────────
+const ATTACH_ICON = {
+  pdf: '📄', doc: '📝', docx: '📝', xls: '📊', xlsx: '📊',
+  ppt: '📊', pptx: '📊', zip: '🗜', png: '🖼', jpg: '🖼', jpeg: '🖼',
+  gif: '🖼', mp4: '🎥', txt: '📃', log: '📃', csv: '📊', xml: '📄', json: '📄'
+};
+function attachIcon(name) {
+  const ext = (name || '').split('.').pop().toLowerCase();
+  return ATTACH_ICON[ext] || '📎';
+}
+function fmtBytes(n) {
+  if (!n) return '';
+  const num = parseInt(n, 10);
+  if (num < 1024) return num + ' B';
+  if (num < 1024 * 1024) return (num / 1024).toFixed(1) + ' KB';
+  return (num / 1024 / 1024).toFixed(1) + ' MB';
+}
+
+let _attachSysId = null;
+async function loadAttachments(sysId) {
+  if (_attachSysId === sysId) return; // 이미 로드됨
+  _attachSysId = sysId;
+  const busy = document.getElementById('attachBusy');
+  const list = document.getElementById('attachList');
+  const empty = document.getElementById('attachEmpty');
+  busy.classList.remove('hidden');
+  list.innerHTML = '';
+  empty.classList.add('hidden');
+  try {
+    const data = await itsmFetch(
+      `/api/now/attachment?sysparm_query=table_name=sn_customerservice_case^table_sys_id=${sysId}&sysparm_fields=sys_id,file_name,size_bytes,content_type,sys_created_on,sys_created_by&sysparm_limit=50&sysparm_orderby=sys_created_on`
+    );
+    const files = data?.result || [];
+    if (!files.length) {
+      empty.classList.remove('hidden');
+      return;
+    }
+    list.innerHTML = files.map(f => `
+      <div class="attach-item">
+        <span class="attach-icon">${attachIcon(f.file_name)}</span>
+        <div class="attach-info">
+          <a class="attach-name ref-link" href="${ITSM_BASE}/sys_attachment.do?sys_id=${f.sys_id}" target="_blank" title="${escHtml(f.file_name)}">${escHtml(f.file_name)}</a>
+          <span class="attach-meta">${fmtBytes(f.size_bytes)} · ${escHtml((f.sys_created_on || '').slice(0,10))} · ${escHtml(f.sys_created_by?.display_value || f.sys_created_by || '')}</span>
+        </div>
+      </div>`).join('');
+  } catch (e) {
+    empty.textContent = 'Failed to load attachments: ' + e.message;
+    empty.classList.remove('hidden');
+  } finally {
+    busy.classList.add('hidden');
+  }
+}
+
+async function uploadAttachment(sysId, file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = reader.result.split(',')[1];
+      browserAPI.runtime.sendMessage({
+        type: 'ITSM_UPLOAD',
+        sysId,
+        fileName: file.name,
+        contentType: file.type || 'application/octet-stream',
+        base64
+      }, resp => {
+        if (browserAPI.runtime.lastError) return reject(new Error(browserAPI.runtime.lastError.message));
+        if (!resp?.ok) return reject(new Error(resp?.error || t('uploadFailed')));
+        resolve(resp);
+      });
+    };
+    reader.onerror = () => reject(new Error(t('fileReadFailed')));
+    reader.readAsDataURL(file);
+  });
+}
+
+// ── AI Insight ────────────────────────────────────────────────────────
+async function runAiInsight() {
+  if (!selectedCase) return;
+  const lang = _uiLang;
+  document.getElementById('aiBusy').classList.remove('hidden');
+  document.getElementById('aiPlaceholder').classList.add('hidden');
+  document.getElementById('aiStructured').classList.add('hidden');
+  document.getElementById('btnAi').disabled = true;
+
+  try {
+    const r = await fetch(getAiInsightUrl(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        caseNumber: selectedCase.number,
+        shortDesc: selectedCase.short_description,
+        state: selectedCase.state,
+        priority: selectedCase.priority,
+        assignedTo: selectedCase.assigned_to,
+        account: selectedCase.account,
+        component: selectedCase.u_app_component,
+        incNumber: selectedCase.correlation_display || '',
+        journal: selectedCase._journal || '',   // ← comments_and_work_notes 전문
+        language: lang,
+        format: 'structured'                     // 서버에 3항목 JSON + timeline 배열 요청
+      })
+    });
+    if (!r.ok) throw new Error(`${t('aiServerError')}: ${r.status}`);
+    const data = await r.json();
+    console.log('[AI] raw insight type:', typeof data.insight, 'timeline:', Array.isArray(data.insight?.timeline) ? data.insight.timeline.length : 'N/A', 'customer_inquiry:', data.insight?.customer_inquiry?.slice?.(0,30));
+    const s = parseAiStructured(data.insight);
+    console.log('[AI] parsed customer_inquiry:', s.customer_inquiry?.slice(0,30), 'required_action:', s.required_action?.slice(0,30), 'timeline entries:', s.timeline.length, 'source_entry:', s.source_entry);
+    _lastAiInsight = s;
+    _lastAiLang = lang;
+    if (selectedCase) selectedCase._aiTimeline = s.timeline;
+    renderAiStructured(s, selectedCase?._journal);
+    renderAiTimeline(s.timeline);
+  } catch (e) {
+    document.getElementById('aiPlaceholder').textContent = `${t('aiError')}: ${e.message}`;
+    document.getElementById('aiPlaceholder').classList.remove('hidden');
+  } finally {
+    document.getElementById('aiBusy').classList.add('hidden');
+    document.getElementById('btnAi').disabled = false;
+  }
+}
+
+// AI 응답 → {customer_inquiry, current_state, required_action, source_entry, timeline:[{date,summary,actor}]}
+function parseAiStructured(insight) {
+  if (insight && typeof insight === 'object') {
+    // 각 필드가 JSON 문자열로 이중 인코딩되어 온 경우 파싱
+    const parse = (val) => {
+      if (typeof val === 'string' && (val.startsWith('{') || val.startsWith('['))) {
+        try { return JSON.parse(val); } catch { return val; }
+      }
+      return val;
+    };
+    return {
+      customer_inquiry: parse(insight.customer_inquiry) || '',
+      current_state: parse(insight.current_state) || '',
+      required_action: parse(insight.required_action) || '',
+      source_entry: (insight.source_entry && insight.source_entry.text) ? insight.source_entry : null,
+      timeline: Array.isArray(insight.timeline) ? insight.timeline : []
+    };
+  }
+  // 문자열이면 JSON 파싱 시도, 실패 시 전체를 current_state에
+  try {
+    const j = JSON.parse(insight);
+    return parseAiStructured(j);
+  } catch {
+    return { customer_inquiry: '', current_state: String(insight || ''), required_action: '', source_entry: null, timeline: [] };
+  }
+}
+
+function renderAiStructured(s, journal) {
+  const map = {
+    customer_inquiry: s.customer_inquiry,
+    current_state: s.current_state,
+    required_action: s.required_action
+  };
+  document.querySelectorAll('#aiStructured .ai-block').forEach(block => {
+    const key = block.dataset.key;
+    block.querySelector('.ai-block-body').textContent = map[key] || '—';
+
+    // current_state 블록은 원문 포함해서 복사
+    if (key === 'current_state' && s.source_entry) {
+      attachCopy(block.querySelector('.copy-btn'), () => {
+        const rawText = `${s.source_entry.time} — ${s.source_entry.author} (${s.source_entry.type})\n${s.source_entry.text}`;
+        return `${map[key] || ''}\n\n[원문]\n${rawText}`;
+      });
+    } else {
+      attachCopy(block.querySelector('.copy-btn'), () => map[key] || '');
+    }
+  });
+
+  // 최근 journal 원문 (current_state 블록 하단) — AI가 current_state 근거로 사용한 항목
+  const rawEl = document.getElementById('aiLatestRaw');
+  const rawText = document.getElementById('aiLatestRawText');
+  const latest = s.source_entry;
+  if (latest) {
+    rawText.textContent = `${latest.time} — ${latest.author} (${latest.type})\n${latest.text}`;
+    rawEl.classList.remove('hidden');
+  } else {
+    rawEl.classList.add('hidden');
+  }
+
+  document.getElementById('aiPlaceholder').classList.add('hidden');
+  document.getElementById('aiStructured').classList.remove('hidden');
+}
+
+// 전체 복사 — HTML/평문 둘 다 클립보드에 쓰기 (hyperlink + 단락 포함)
+function copyAiFull(s) {
+  if (!s) return;
+  const c = selectedCase;
+  const snUrl = c ? `${ITSM_BASE}/now/cwf/agent/record/sn_customerservice_case/${c.sys_id}` : '';
+  const corrDisp = c?.correlation_display || '';
+
+  // HTML 버전
+  const h = (t) => t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const nl2br = (t) => h(t).replace(/\n/g,'<br>');
+  let html = '';
+  if (c) {
+    html += `<p><strong>${t('caseLabel')}:</strong> <a href="${h(snUrl)}">${h(c.number)}</a>`;
+    if (corrDisp) html += ` / <strong>INC:</strong> ${h(corrDisp)}`;
+    html += `<br><strong>${t('titleLabel')}:</strong> ${h(c.short_description)}<br><strong>${t('account')}:</strong> ${h(c.account)}<br><strong>${t('statusPriorityLabel')}:</strong> ${h(c.state)} / ${h(c.priority)}<br><strong>${t('assignedTo')}:</strong> ${h(c.assigned_to || '')}</p>`;
+  }
+  if (s.customer_inquiry) html += `<p><strong>${t('copyCustomerInquiry')}</strong><br>${nl2br(s.customer_inquiry)}</p>`;
+  if (s.current_state)    html += `<p><strong>${t('copyCurrentState')}</strong><br>${nl2br(s.current_state)}</p>`;
+  if (s.required_action)  html += `<p><strong>${t('copyRequiredAction')}</strong><br>${nl2br(s.required_action)}</p>`;
+  if (Array.isArray(s.timeline) && s.timeline.length) {
+    const rows = s.timeline.map(e => `<li><strong>${h(e.date||'')}</strong> (${h(e.actor||'')}) — ${h(e.summary||'')}</li>`).join('');
+    html += `<p><strong>${t('copyTimeline2')}</strong><br><ul>${rows}</ul></p>`;
+  }
+  const latestEntry = s.source_entry;
+  if (latestEntry) {
+    html += `<p><strong>[${t('sourceEntryLabel')}]</strong><br><em>${nl2br(`${latestEntry.time} — ${latestEntry.author} (${latestEntry.type})\n${latestEntry.text}`)}</em></p>`;
+  }
+
+  // 평문 버전
+  const plain = aiFullText(s);
+
+  try {
+    navigator.clipboard.write([
+      new ClipboardItem({
+        'text/html': new Blob([html], { type: 'text/html' }),
+        'text/plain': new Blob([plain], { type: 'text/plain' })
+      })
+    ]);
+  } catch {
+    navigator.clipboard.writeText(plain);
+  }
+}
+
+// 전체 복사 텍스트 조립 — 케이스 메타 헤더 + 3항목 + 진행 타임라인 (고객/내부 전달용)
+function aiFullText(s) {
+  if (!s) return '';
+  const c = selectedCase;
+  const parts = [];
+  if (c) {
+    const snUrl = `${ITSM_BASE}/now/cwf/agent/record/sn_customerservice_case/${c.sys_id}`;
+    const header = [
+      `${t('caseLabel')}: ${c.number || ''} — ${c.short_description || ''}`,
+      `${t('account')}: ${c.account || ''}`,
+      `${t('statusPriorityLabel')}: ${c.state || ''} / ${c.priority || ''}`,
+      `${t('assignedTo')}: ${c.assigned_to || ''}`,
+      c.correlation_display ? `${t('incLabel')}: ${c.correlation_display}` : '',
+      `ServiceNow: ${snUrl}`
+    ].filter(Boolean).join('\n');
+    parts.push(header);
+  }
+  parts.push(
+    s.customer_inquiry && `${t('copyCustomerInquiry')}\n${s.customer_inquiry}`,
+    s.current_state && `${t('copyCurrentState')}\n${s.current_state}`,
+    s.required_action && `${t('copyRequiredAction')}\n${s.required_action}`
+  );
+  if (Array.isArray(s.timeline) && s.timeline.length) {
+    const tl = s.timeline
+      .map(e => `- ${e.date || ''} (${e.actor || ''}): ${e.summary || ''}`)
+      .join('\n');
+    parts.push(`${t('copyTimeline2')}\n${tl}`);
+  }
+  const latestEntry = s.source_entry;
+  if (latestEntry) {
+    parts.push(`[${t('sourceEntryLabel')}]\n${latestEntry.time} — ${latestEntry.author} (${latestEntry.type})\n${latestEntry.text}`);
+  }
+  return parts.filter(Boolean).join('\n\n');
+}
+
+function renderMemoHistory(journal) {
+  const el = document.getElementById('memoHistory');
+  if (!el) return;
+  if (!journal || !myUserName) { el.classList.add('hidden'); return; }
+
+  const INTERNAL_TYPES = ['Work notes', 'Additional work notes', 'Internal Info'];
+  const EXTERNAL_TYPES = ['Additional comments', 'Customer comments', 'Comments'];
+
+  const entries = parseJournal(journal).filter(e => {
+    const isMe = e.author && myUserName && e.author.toLowerCase().includes(myUserName.split(' ')[0].toLowerCase());
+    const isMemo = INTERNAL_TYPES.includes(e.type) || EXTERNAL_TYPES.includes(e.type);
+    return isMe && isMemo && e.text.trim();
+  });
+
+  if (!entries.length) { el.classList.add('hidden'); return; }
+
+  el.innerHTML = entries.map(e => {
+    const isInternal = INTERNAL_TYPES.includes(e.type);
+    const typeLabel = isInternal ? 'Internal' : 'External';
+    const typeCls = isInternal ? 'internal' : 'external';
+    return `<div class="memo-history-item">
+      <div class="memo-history-head">
+        <span class="memo-history-type ${typeCls}">${typeLabel}</span>
+        <span class="memo-history-time">${escHtml(e.time)}</span>
+      </div>
+      <div class="memo-history-body">${escHtml(e.text.slice(0, 500))}${e.text.length > 500 ? '…' : ''}</div>
+    </div>`;
+  }).join('');
+  el.classList.remove('hidden');
+}
+
+// ── Watch List 패널 ───────────────────────────────────────────────────
+async function toggleWatchPanel() {
+  const panel = document.getElementById('watchPanel');
+  const isHidden = panel.classList.contains('hidden');
+  if (isHidden) {
+    panel.classList.remove('hidden');
+    // ITSM에서 최신 watch_list 재조회 후 렌더
+    if (selectedCase) {
+      try {
+        const data = await itsmFetch(`/api/now/table/sn_customerservice_case/${selectedCase.sys_id}?sysparm_fields=watch_list&sysparm_display_value=true`);
+        selectedCase.watch_list = getStr(data?.result?.watch_list);
+      } catch (e) { /* 실패 시 기존값 사용 */ }
+    }
+    renderWatchMembers();
+    document.getElementById('watchSearchInput').value = '';
+    document.getElementById('watchSearchResults').classList.add('hidden');
+    const inp = document.getElementById('watchSearchInput');
+    inp.onkeyup = null;
+    inp.oninput = debounceWatchSearch;
+  } else {
+    panel.classList.add('hidden');
+  }
+}
+
+let _watchSearchTimer = null;
+function debounceWatchSearch(e) {
+  clearTimeout(_watchSearchTimer);
+  const q = e.target.value.trim();
+  if (q.length < 2) {
+    document.getElementById('watchSearchResults').classList.add('hidden');
+    return;
+  }
+  _watchSearchTimer = setTimeout(() => searchWatchUsers(q), 250);
+}
+
+function renderWatchMembers() {
+  if (!selectedCase) return;
+  if (!myEmail) { loadMyUser().then(renderWatchMembers); return; }
+  const raw = (selectedCase.watch_list || '').split(',').map(s => s.trim()).filter(Boolean);
+  const myId = myEmail.split('@')[0];
+  const iWatching = raw.some(e => e.includes(myId));
+  const others = raw.filter(e => !e.includes(myId));
+  const el = document.getElementById('watchMembers');
+  el.innerHTML = `
+    <div class="watch-me-row">
+      <span class="watch-me-label">${t('watchMe')} (${escHtml(myEmail)})</span>
+      <button class="watch-me-btn ${iWatching ? 'watching' : ''}" id="btnWatchMe">
+        ${iWatching ? t('watchViewing') : t('watchAdding')}
+      </button>
+    </div>
+    ${others.map(email => `
+      <div class="watch-member-row">
+        <span class="watch-member-email">${escHtml(email)}</span>
+        <button class="watch-remove-btn" data-email="${escHtml(email)}" title="${t('watchRemove')}">✕</button>
+      </div>`).join('')}
+    ${!iWatching && !others.length ? `<div class="watch-empty">${t('watchNoOne')}</div>` : ''}`;
+
+  document.getElementById('btnWatchMe').onclick = async () => {
+    await toggleWatchSelf();
+    renderWatchMembers();
+  };
+  el.querySelectorAll('.watch-remove-btn').forEach(btn => {
+    btn.onclick = async () => {
+      await removeFromWatchList(btn.dataset.email);
+      renderWatchMembers();
+    };
+  });
+}
+
+async function toggleWatchSelf() {
+  if (!myEmail) { await loadMyUser(); if (!myEmail) return; }
+  const myId = myEmail.split('@')[0];
+  const raw = (selectedCase.watch_list || '').split(',').map(s => s.trim()).filter(Boolean);
+  const watching = raw.some(e => e.includes(myId));
+  const newList = watching
+    ? raw.filter(e => !e.includes(myId))
+    : [...raw, myEmail];
+  await patchWatchList(newList);
+}
+
+async function removeFromWatchList(email) {
+  const raw = (selectedCase.watch_list || '').split(',').map(s => s.trim()).filter(Boolean);
+  const newList = raw.filter(e => e !== email);
+  await patchWatchList(newList);
+}
+
+async function addToWatchList(email) {
+  const raw = (selectedCase.watch_list || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (raw.includes(email)) return;
+  await patchWatchList([...raw, email]);
+}
+
+async function patchWatchList(newList) {
+  const joined = newList.join(',');
+  await itsmFetch(`/api/now/table/sn_customerservice_case/${selectedCase.sys_id}__PATCH__${JSON.stringify({ watch_list: joined })}`);
+  selectedCase.watch_list = joined;
+  // 목록의 해당 케이스 아이템 watch 버튼도 갱신
+  const myId = myEmail ? myEmail.split('@')[0] : '';
+  const iWatching = myId && newList.some(e => e.includes(myId));
+  const listBtn = document.querySelector(`.watch-btn[data-sysid="${selectedCase.sys_id}"]`);
+  if (listBtn) {
+    listBtn.classList.toggle('watching', iWatching);
+    listBtn.title = iWatching ? `${t('watchViewing')}: ${joined}` : t('watchAdding');
+  }
+}
+
+async function searchWatchUsers(q) {
+  const resultsEl = document.getElementById('watchSearchResults');
+  resultsEl.innerHTML = `<div class="watch-searching">${t('watchSearching')}</div>`;
+  resultsEl.classList.remove('hidden');
+  try {
+    const data = await itsmFetch(
+      `/api/now/table/sys_user?sysparm_query=active=true^nameLIKE${encodeURIComponent(q)}^ORemailLIKE${encodeURIComponent(q)}&sysparm_fields=sys_id,name,email&sysparm_limit=8&sysparm_display_value=true`
+    );
+    const users = data?.result || [];
+    if (!users.length) {
+      resultsEl.innerHTML = `<div class="watch-searching">${t('watchNoResult')}</div>`;
+      return;
+    }
+    const currentList = (selectedCase.watch_list || '').split(',').map(s => s.trim()).filter(Boolean);
+    resultsEl.innerHTML = users.map(u => {
+      const email = getStr(u.email);
+      const name = getStr(u.name);
+      const already = currentList.includes(email);
+      return `<div class="watch-result-row ${already ? 'already' : ''}" data-email="${escHtml(email)}">
+        <div class="watch-result-info">
+          <span class="watch-result-name">${escHtml(name)}</span>
+          <span class="watch-result-email">${escHtml(email)}</span>
+        </div>
+        <button class="watch-add-btn" ${already ? 'disabled' : ''} data-email="${escHtml(email)}">
+          ${already ? '✓' : t('watchAddBtn')}
+        </button>
+      </div>`;
+    }).join('');
+    resultsEl.querySelectorAll('.watch-add-btn:not([disabled])').forEach(btn => {
+      btn.onclick = async () => {
+        btn.disabled = true;
+        btn.textContent = t('watchAdding2');
+        await addToWatchList(btn.dataset.email);
+        btn.textContent = '✓';
+        renderWatchMembers();
+      };
+    });
+  } catch (e) {
+    resultsEl.innerHTML = `<div class="watch-searching">${t('watchFailed')}: ${escHtml(e.message)}</div>`;
+  }
+}
+
+// ── MCC Escalation 모달 ───────────────────────────────────────────────
+async function openMccModal() {
+  if (!selectedCase) return;
+  const c = selectedCase;
+
+  // 이미 에스컬레이션 존재 시 안내 후 종료
+  if (c.mcc_escalated) {
+    alert(`${c.number} ${t('mccAlreadyEscalated')}`);
+    return;
+  }
+
+  // 모달 생성
+  const backdrop = document.createElement('div');
+  backdrop.className = 'modal-backdrop';
+  backdrop.innerHTML = `
+    <div class="modal">
+      <div class="modal-header">
+        <span>⚡ MCC Escalation — ${escHtml(c.number)}</span>
+        <button class="modal-close" id="mccClose">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="mccGenerating" class="modal-generating">${t('mccGenerating')}</div>
+        <div id="mccForm" class="hidden">
+          <div class="modal-field">
+            <label>Request Title *</label>
+            <input type="text" id="mccTitle" style="font-size:12px;">
+          </div>
+          <div class="modal-field">
+            <label>Business Impact *</label>
+            <textarea id="mccBi" rows="3"></textarea>
+          </div>
+          <div class="modal-field">
+            <label>Affected Business Process</label>
+            <textarea id="mccProcess" rows="2"></textarea>
+          </div>
+          <div class="modal-field">
+            <label>How They Are Affected</label>
+            <textarea id="mccAffected" rows="2"></textarea>
+          </div>
+          <div class="modal-field">
+            <label>Upcoming Due Dates</label>
+            <input type="text" id="mccDue">
+          </div>
+          <div class="modal-field">
+            <label>Strategic Involvement</label>
+            <textarea id="mccStrategic" rows="2"></textarea>
+          </div>
+          <div class="modal-field">
+            <label>Already Involved Parties</label>
+            <textarea id="mccParties" rows="2"></textarea>
+          </div>
+          <div class="modal-options">
+            <div class="modal-opt-label">${t('mccExpectedAction')}</div>
+            <label class="modal-opt-radio"><input type="radio" name="mccAction" id="mccAssignProcessor" value="assign_processor"> Assign Processor</label>
+            <label class="modal-opt-radio"><input type="radio" name="mccAction" id="mccSpeedup" value="speedup"> Speed Up</label>
+            <label class="modal-opt-radio"><input type="radio" name="mccAction" id="mccVeryHigh" value="very_high"> Raise Priority to Very High</label>
+          </div>
+        </div>
+      </div>
+      <div id="mccFooter" class="modal-footer hidden">
+        <button class="btn-ghost btn-sm" id="mccCancel">${t('mccCancel')}</button>
+        <button class="btn-danger" id="mccSubmit">${t('mccSubmit')}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(backdrop);
+  let cancelled = false;
+  const closeModal = () => { cancelled = true; backdrop.remove(); };
+
+  document.getElementById('mccClose').onclick = closeModal;
+  document.getElementById('mccCancel')?.addEventListener('click', closeModal);
+  backdrop.addEventListener('click', e => { if (e.target === backdrop) closeModal(); });
+
+  // AI로 내용 생성
+  try {
+    const r = await fetch(getMccGenerateUrl(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        caseNumber: c.number,
+        shortDesc: c.short_description,
+        state: c.state,
+        priority: c.priority,
+        assignedTo: c.assigned_to,
+        account: c.account,
+        component: c.u_app_component,
+        journal: c._journal || ''
+      })
+    });
+    if (cancelled) return;
+    const data = await r.json();
+    if (cancelled) return;
+    const fields = parseMccFields(data.fields || data.insight || '', c);
+    fillMccForm(fields);
+    // 상태 기반 기본값 고정: New → assign_processor, 나머지 → speedup
+    const defaultAction = c.state_code === '1' ? 'assign_processor' : 'speedup';
+    const radio = document.querySelector(`input[name="mccAction"][value="${defaultAction}"]`);
+    if (radio) radio.checked = true;
+  } catch (e) {
+    if (cancelled) return;
+    // AI 실패시 기본값
+    fillMccForm({
+      title: `[${c.priority}] ${c.number} — ${c.account}: ${c.short_description.slice(0, 80)}`,
+      businessImpact: `Customer ${c.account} is experiencing critical issues with ${c.u_app_component}. Immediate attention required.`,
+      affectedProcess: '',
+      howAffected: '',
+      dueDates: '',
+      strategicInvolvement: '',
+      involvedParties: `SAP Support, ${c.assigned_to || 'Assigned Engineer'}`
+    });
+    document.querySelector(`input[name="mccAction"][value="${c.state_code === '1' ? 'assign_processor' : 'speedup'}"]`).checked = true;
+  }
+
+  if (cancelled) return;
+  document.getElementById('mccGenerating').classList.add('hidden');
+  document.getElementById('mccForm').classList.remove('hidden');
+  document.getElementById('mccFooter').classList.remove('hidden');
+
+  document.getElementById('mccSubmit').onclick = () => submitMcc(c, backdrop);
+}
+
+function parseMccFields(data, c) {
+  // data가 이미 객체면 그대로 매핑
+  const json = typeof data === 'object' && data !== null ? data
+    : (() => { try { return JSON.parse(data); } catch { return null; } })();
+  if (json) {
+    return {
+      title: json.request_title || json.title || `[${c.priority}] ${c.number} — ${c.account}`,
+      businessImpact: json.business_impact || '',
+      affectedProcess: json.affected_business_process || '',
+      howAffected: json.how_they_are_affected || '',
+      dueDates: json.upcoming_due_dates || '',
+      strategicInvolvement: json.strategic_involvement || '',
+      involvedParties: json.already_involved_parties || ''
+    };
+  }
+  return {
+    title: `[${c.priority}] ${c.number} — ${c.account}: ${c.short_description.slice(0, 80)}`,
+    businessImpact: String(data || '').slice(0, 300),
+    affectedProcess: '', howAffected: '', dueDates: '',
+    strategicInvolvement: '',
+    involvedParties: `SAP Support, ${c.assigned_to || ''}`
+  };
+}
+
+function stripHtml(html) {
+  return (html || '').replace(/<[^>]*>/g, '').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').trim();
+}
+
+function defaultDueDate() {
+  const d = new Date();
+  d.setDate(d.getDate() + 7);
+  return d.toISOString().slice(0, 10); // YYYY-MM-DD
+}
+
+function fillMccForm(f) {
+  document.getElementById('mccTitle').value = f.title || '';
+  document.getElementById('mccBi').value = stripHtml(f.businessImpact || '');
+  document.getElementById('mccProcess').value = f.affectedProcess || '';
+  document.getElementById('mccAffected').value = f.howAffected || '';
+  document.getElementById('mccDue').value = f.dueDates || defaultDueDate();
+  document.getElementById('mccStrategic').value = f.strategicInvolvement || '';
+  document.getElementById('mccParties').value = f.involvedParties || '';
+}
+
+async function submitMcc(c, backdrop) {
+  const btn = document.getElementById('mccSubmit');
+  btn.disabled = true;
+  btn.textContent = t('mccSubmitting');
+
+  const selectedAction = document.querySelector('input[name="mccAction"]:checked')?.value || '';
+  const speedup = selectedAction === 'speedup';
+  const veryHigh = selectedAction === 'very_high';
+  const assignProcessor = selectedAction === 'assign_processor';
+  const fields = {
+    title: document.getElementById('mccTitle').value,
+    businessImpact: document.getElementById('mccBi').value,
+    affectedProcess: document.getElementById('mccProcess').value,
+    howAffected: document.getElementById('mccAffected').value,
+    dueDates: document.getElementById('mccDue').value,
+    strategicInvolvement: document.getElementById('mccStrategic').value,
+    involvedParties: document.getElementById('mccParties').value
+  };
+
+  // background로 MCC 제출 요청
+  console.log('[CSM] MCC 제출 요청 - accountSysId:', c.account_sys_id, 'caseSysId:', c.sys_id);
+  browserAPI.runtime.sendMessage({
+    type: 'MCC_SUBMIT',
+    caseSysId: c.sys_id,
+    caseNumber: c.number,
+    fields,
+    speedup,
+    veryHigh,
+    assignProcessor,
+    accountSysId: c.account_sys_id,
+    priority: c.priority
+  }, resp => {
+    if (resp?.ok) {
+      if (selectedCase && selectedCase.sys_id === c.sys_id) selectedCase.mcc_escalated = true;
+      // 케이스 항목에 MCC 뱃지 추가
+      const item = document.querySelector(`.case-item[data-sysid="${c.sys_id}"]`);
+      if (item && !item.querySelector('.mcc-badge')) {
+        const badges = item.querySelector('.case-badges');
+        const badge = document.createElement('span');
+        badge.className = 'mcc-badge';
+        badge.textContent = '⚡ MCC';
+        badges.insertBefore(badge, badges.querySelector('.watch-btn'));
+      }
+      backdrop.remove();
+      alert(`${t('mccSuccess')}: ${resp.ritm || ''}`);
+    } else {
+      btn.disabled = false;
+      btn.textContent = t('mccSubmit');
+      alert(t('mccFailed') + ': ' + (resp?.error || t('mccUnknownError')));
+    }
+  });
+}
+
+// ── 자동완성 ─────────────────────────────────────────────────────────
+let acTimer = null;
+async function handleAccountInput(e) {
+  const q = e.target.value.trim();
+  const ac = document.getElementById('autocomplete');
+  clearTimeout(acTimer);
+  if (q.length < 2) { ac.classList.add('hidden'); return; }
+
+  const isCasePattern = /^CS\d{6,}/i.test(q) || /^\d+\/\d{4}$/.test(q) || /^\d{14,}$/.test(q);
+
+  // 명확한 케이스 번호 패턴 (CS접두사, 연도형, 14자리+)
+  if (isCasePattern) {
+    const rect = e.target.getBoundingClientRect();
+    ac.style.top = (rect.bottom + 4) + 'px';
+    ac.style.left = rect.left + 'px';
+    ac.style.width = rect.width + 'px';
+    ac.innerHTML = `<div class="autocomplete-item autocomplete-unified" data-q="${escHtml(q)}">
+      <div class="autocomplete-name">🔍 <strong>${escHtml(q)}</strong> ${t('searchDirectLabel')}</div>
+      <div class="autocomplete-id">${t('searchDirectHint')}</div>
+    </div>`;
+    ac.classList.remove('hidden');
+    ac.querySelector('.autocomplete-unified').addEventListener('click', () => {
+      ac.classList.add('hidden');
+      searchCaseDirectly(q);
+    });
+    return;
+  }
+
+  // 숫자 또는 텍스트 → 통합검색 힌트 즉시 표시 + 고객사명 실시간 검색
+  const rect = e.target.getBoundingClientRect();
+  ac.style.top = (rect.bottom + 4) + 'px';
+  ac.style.left = rect.left + 'px';
+  ac.style.width = rect.width + 'px';
+
+  // 즉시: 통합검색 힌트
+  ac.innerHTML = `<div class="autocomplete-item autocomplete-unified" data-q="${escHtml(q)}">
+    <div class="autocomplete-name">🔍 <strong>${escHtml(q)}</strong> ${t('searchUnifiedLabel')}</div>
+    <div class="autocomplete-id">${t('searchUnifiedHint')}</div>
+  </div>`;
+  ac.classList.remove('hidden');
+  ac.querySelector('.autocomplete-unified').addEventListener('click', () => {
+    ac.classList.add('hidden');
+    searchUnified(q);
+  });
+
+  // 텍스트 입력 시: 고객사명 실시간 후보도 추가
+  if (!/^\d+$/.test(q)) {
+    acTimer = setTimeout(async () => {
+      try {
+        const path = `/api/now/table/customer_account?sysparm_query=nameCONTAINS${encodeURIComponent(q)}^ORDERBYDESCu_sap_crm_bp_number&sysparm_fields=name,number,u_sap_crm_bp_number&sysparm_exclude_reference_link=true`;
+        const resp = await new Promise((resolve, reject) => {
+          browserAPI.runtime.sendMessage({ type: 'ITSM_QUERY', path }, r => {
+            if (r?.ok) resolve(r.data);
+            else reject(new Error(r?.error || 'ITSM 오류'));
+          });
+        });
+        if (document.getElementById('accountInput').value.trim() !== q) return;
+        const results = (resp?.result || [])
+          .sort((a, b) => (b.u_sap_crm_bp_number ? 1 : 0) - (a.u_sap_crm_bp_number ? 1 : 0));
+        if (!results.length) return;
+
+        const itemsHtml = results.map(a => {
+          const crmId = a.u_sap_crm_bp_number || a.number || '';
+          const erpId = a.number || '';
+          const name = a.name || '';
+          const crmStr = crmId.replace(/^0+/, '');
+          const erpStr = erpId.replace(/^0+/, '');
+          const idDisplay = crmId !== erpId && crmStr && erpStr
+            ? `<span class="id-label">CRM</span> ${crmStr} <span class="id-sep">·</span> <span class="id-label">ERP</span> ${erpStr}`
+            : `<span class="id-label">ERP</span> ${erpStr}`;
+          const displayName = name.replace(/\s*\([^)]*\)\s*$/, '').trim();
+          return `<div class="autocomplete-item" data-crmid="${escHtml(crmId)}" data-erpid="${escHtml(erpId)}" data-name="${escHtml(name)}">
+            <div class="autocomplete-name">${escHtml(displayName)}</div>
+            <div class="autocomplete-id">${idDisplay}</div>
+          </div>`;
+        }).join('');
+
+        // 통합검색 힌트 아래에 고객사 후보 추가
+        const existing = ac.innerHTML;
+        ac.innerHTML = existing + itemsHtml;
+
+        ac.querySelectorAll('.autocomplete-item:not(.autocomplete-unified)').forEach(item => {
+          item.addEventListener('click', () => {
+            const cleanName = (item.dataset.name || '').replace(/\s*\([^)]*\)\s*$/, '').trim();
+            document.getElementById('accountInput').value = cleanName;
+            ac.classList.add('hidden');
+            doSearch([item.dataset.crmid], cleanName);
+          });
+        });
+      } catch { /* 무시 */ }
+    }, 300);
+  }
+}
+
+// ── 초기화 ────────────────────────────────────────────────────────────
+async function init() {
+  // ── 팀 설정 로드 (owners, aiBase) ────────────────────────────────
+  await new Promise(resolve => {
+    browserAPI.storage.local.get(['owners', 'aiBase'], ({ owners, aiBase }) => {
+      console.log('[CSM] storage.get owners:', owners ? `${owners.length}명` : 'null');
+      if (Array.isArray(owners) && owners.length > 0) _owners = owners;
+      if (aiBase) _aiBase = aiBase;
+      resolve();
+    });
+  });
+  renderOwnerTabs();
+
+  // background에서 push하는 SSO 부트스트랩 단계를 진행상태 바에 표시
+  const BOOTSTRAP_STEPS = {
+    sso_start:   () => t('ssoStart'),
+    sso_idp:     () => t('ssoIdp'),
+    itsm_return: () => t('itsmReturn'),
+  };
+  browserAPI.runtime.onMessage.addListener((msg) => {
+    if (msg.type === 'BOOTSTRAP_STATUS' && BOOTSTRAP_STEPS[msg.step]) {
+      setProgress(BOOTSTRAP_STEPS[msg.step]());
+    }
+  });
+
+  loadMyUser().catch(() => {});
+  loadFavourites();
+  loadSeenStates();
+
+  // ── UI 언어 초기화 ────────────────────────────────────────────────
+  browserAPI.storage.local.get('uiLang', ({ uiLang }) => {
+    _uiLang = uiLang || detectBrowserLang();
+    document.getElementById('uiLangSelect').value = _uiLang;
+    applyI18n();
+  });
+  // UI 언어 변경 → AI 캐시 무효화 후 재실행
+  document.getElementById('uiLangSelect').addEventListener('change', () => {
+    _uiLang = document.getElementById('uiLangSelect').value;
+    browserAPI.storage.local.set({ uiLang: _uiLang });
+    applyI18n();
+    if (selectedCase && _lastAiLang !== _uiLang) {
+      _lastAiInsight = null;
+      _lastAiLang = null;
+      runAiInsight();
+    }
+  });
+
+
+  // ── 설정 패널 ────────────────────────────────────────────────────
+  const settingsPanel = document.getElementById('settingsPanel');
+  document.getElementById('btnSettings').onclick = (e) => {
+    e.stopPropagation();
+    settingsPanel.classList.toggle('hidden');
+  };
+  document.getElementById('btnSettingsClose').onclick = () => {
+    settingsPanel.classList.add('hidden');
+  };
+  document.addEventListener('click', (e) => {
+    if (!settingsPanel.classList.contains('hidden') &&
+        !e.target.closest('#settingsPanel') &&
+        !e.target.closest('#btnSettings') &&
+        !e.target.closest('#ownerEditorModal')) {
+      settingsPanel.classList.add('hidden');
+    }
+  });
+
+  // AI URL 입력 초기값 표시
+  document.getElementById('settingsAiUrl').value = _aiBase === DEFAULT_AI_BASE ? '' : _aiBase;
+  document.getElementById('settingsAiUrl').placeholder = DEFAULT_AI_BASE;
+
+  initTeamSettings();
+
+  // ── 테마 ─────────────────────────────────────────────────────────
+  function applyTheme(theme) {
+    if (theme === 'light') {
+      document.documentElement.removeAttribute('data-theme');
+    } else {
+      document.documentElement.setAttribute('data-theme', theme);
+    }
+    document.querySelectorAll('.theme-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.theme === theme);
+    });
+  }
+
+  browserAPI.storage.local.get('theme', ({ theme }) => {
+    applyTheme(theme || 'light');
+  });
+
+  document.querySelectorAll('.theme-btn').forEach(btn => {
+    btn.onclick = () => {
+      const theme = btn.dataset.theme;
+      applyTheme(theme);
+      browserAPI.storage.local.set({ theme });
+    };
+  });
+
+  // ── 시작 탭 설정 ──────────────────────────────────────────────────
+  // startTab 저장값: 'all' | 'favourite' | 'owner:N' (N = _owners 인덱스)
+
+  function applyStartTab(key) {
+    document.querySelectorAll('.start-tab-btn').forEach(b =>
+      b.classList.toggle('active', b.dataset.key === key));
+  }
+
+  browserAPI.storage.local.get('startTab', async ({ startTab }) => {
+    const key = startTabToOwnerKey(startTab);
+    applyStartTab(key);
+    document.querySelectorAll('.owner-tab').forEach(t => t.classList.remove('active'));
+    const tab = document.querySelector(`.owner-tab[data-key="${key}"]`);
+    if (tab) tab.classList.add('active');
+    selectedOwnerKey = key;
+
+    // 시작 탭 렌더링 완료까지 대기
+    try {
+      if (key === 'notifications') {
+        await renderNotifications();
+      } else if (key === 'favourite') {
+        await renderFavouriteList();
+      } else {
+        const owner = _owners.find(o => o.key === key);
+        const ids = owner ? owner.ids : [...new Set(_owners.flatMap(o => o.ids))];
+        await renderAccountList(ids);
+      }
+    } catch (error) {
+      console.error('[CSM] Start tab render failed:', error);
+    }
+
+    // 1. 시작 탭 렌더링 완료 후 백그라운드 체크 시작
+    checkUpdatesBackground();
+  });
+
+  document.querySelectorAll('.start-tab-btn').forEach(btn => {
+    btn.onclick = () => {
+      const key = btn.dataset.key;
+      applyStartTab(key);
+      browserAPI.storage.local.set({ startTab: ownerKeyToStartTab(key) });
+    };
+  });
+
+  // ── Favourite 백업/복원 ───────────────────────────────────────────
+  document.getElementById('btnExportFav').onclick = () => {
+    const data = JSON.stringify({ version: 1, favourites: _favourites }, null, 2);
+    const blob = new Blob([data], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `csm-favourites-${new Date().toISOString().slice(0,10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  document.getElementById('importFavInput').onchange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const obj = JSON.parse(ev.target.result);
+        const imported = Array.isArray(obj.favourites) ? obj.favourites : (Array.isArray(obj) ? obj : null);
+        if (!imported) { alert(t('favImportInvalid')); return; }
+        const merged = [..._favourites];
+        let added = 0;
+        for (const f of imported) {
+          const isDup = f.type === 'case'
+            ? merged.some(m => m.type === 'case' && m.sysId === f.sysId)
+            : merged.some(m => m.type !== 'case' && String(m.crmId) === String(f.crmId));
+          if (!isDup) { merged.push(f); added++; }
+        }
+        _favourites = merged;
+        saveFavourites();
+        alert(`${t('favImportDone')}: ${added}${t('favImportAdded')} ${_favourites.length}${t('favImportTotal')}`);
+        if (selectedOwnerKey === 'favourite') renderFavouriteList();
+        updateFavouriteBtn();
+      } catch { alert(t('favImportError')); }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  };
+
+  // 이벤트
+  document.getElementById('btnRefresh').onclick = () => {
+    const btn = document.getElementById('btnRefresh');
+    btn.style.transition = 'transform 0.4s';
+    btn.style.transform = 'rotate(360deg)';
+    setTimeout(() => { btn.style.transition = ''; btn.style.transform = ''; }, 420);
+
+    // Notifications 탭이면 리렌더링 안 함 (백그라운드 체크만 실행)
+    if (selectedOwnerKey === 'notifications') {
+      return; // 새로고침 버튼 클릭 시 checkUpdatesBackground()는 별도 핸들러에서 실행됨
+    }
+
+    if (_currentView === 'account') {
+      // 고객사 목록 화면 → 목록 재렌더
+      if (selectedOwnerKey === 'favourite') {
+        renderFavouriteList();
+      } else {
+        const owner = _owners.find(o => o.key === selectedOwnerKey);
+        const ids = owner ? owner.ids : [...new Set(_owners.flatMap(o => o.ids))];
+        renderAccountList(ids);
+      }
+    } else if (_lastTargets && _lastTargets.length) {
+      // 케이스 목록 화면 → 현재 고객사 케이스 재조회
+      doSearch(_lastTargets.map(t => t.crmId), _lastTargets.length === 1 ? _lastTargets[0].name : undefined);
+    }
+  };
+
+  document.getElementById('btnSearch').onclick = async () => {
+    const q = document.getElementById('accountInput').value.trim();
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    console.log('[CSM] 🔍 btnSearch 클릭');
+    console.log('[CSM] 입력값:', JSON.stringify(q));
+    console.log('[CSM] 길이:', q.length);
+    console.log('[CSM] 패턴 테스트:');
+    console.log('  /^\\d{6,7}$/.test(q):', /^\d{6,7}$/.test(q));
+    console.log('  /^CS\\d{6,}/i.test(q):', /^CS\d{6,}/i.test(q));
+    console.log('  /^\\d+\\/\\d{4}$/.test(q):', /^\d+\/\d{4}$/.test(q));
+    console.log('[CSM] koreaAccounts:', koreaAccounts ? '로드됨' : 'null');
+    console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+    document.getElementById('autocomplete').classList.add('hidden');
+    if (!q) {
+      if (_lastTargets) doSearch(_lastTargets.map(t => t.crmId), _lastTargets.length === 1 ? _lastTargets[0].name : undefined);
+      return;
+    }
+
+    // 세션 확인 — 없으면 획득 후 재실행
+    if (!myUserId) {
+      console.log('[CSM] 세션 없음, loadMyUser 시작');
+      setProgress(t('ssoStart') || '세션 획득 중…');
+      try {
+        await loadMyUser();
+        setProgress('');
+      } catch (e) {
+        setProgress('');
+        alert(t('loginError') || '로그인 실패. 페이지를 새로고침하세요.');
+        return;
+      }
+      if (!myUserId) {
+        alert(t('loginError') || '세션을 가져올 수 없습니다.');
+        return;
+      }
+    }
+
+    // 명확한 케이스 번호 패턴(CS접두사, 연도형, 14자리+) → 케이스 직접 검색
+    if (/^CS\d{6,}/i.test(q) || /^\d+\/\d{4}$/.test(q) || /^\d{14,}$/.test(q)) {
+      console.log('[CSM] → searchCaseDirectly (CS/연도형/14자리)');
+      searchCaseDirectly(q);
+      return;
+    }
+
+    // 6~7자리 숫자 → 케이스 번호로만 간주 (CRM ID는 고객사 리스트에서만)
+    if (/^\d{6,7}$/.test(q)) {
+      console.log('[CSM] → searchCaseDirectly (6~7자리 케이스)');
+      searchCaseDirectly(q);
+      return;
+    }
+
+    // 그 외 모두 → 통합 검색 (고객사 + 케이스 혼합)
+    console.log('[CSM] → searchUnified');
+    searchUnified(q);
+  };
+
+  // status 필터 변경 → 클라이언트 재필터 (서버 재조회 없음)
+  document.querySelectorAll('.status-chk').forEach(chk => {
+    chk.addEventListener('change', () => {
+      applyComponentFilter();
+    });
+  });
+
+  // 기간 필터 변경 → 서버 재조회
+  document.getElementById('periodSelect').addEventListener('change', () => {
+    if (_lastTargets?.length) {
+      doSearch(_lastTargets.map(t => t.crmId), _lastTargets.length === 1 ? _lastTargets[0].name : undefined);
+    }
+  });
+
+  // component 필터 변경 → 클라이언트 재필터 (서버 재조회 없음)
+  document.querySelectorAll('.comp-chk').forEach(chk => {
+    chk.addEventListener('change', () => {
+      if (chk.value === 'ALL' && chk.checked) {
+        // All 선택 시 BDC/BTP 해제
+        document.querySelectorAll('.comp-chk').forEach(c => { if (c.value !== 'ALL') c.checked = false; });
+      } else if (chk.value !== 'ALL' && chk.checked) {
+        document.querySelector('.comp-chk[value="ALL"]').checked = false;
+      }
+      if (_rawCases.length) applyComponentFilter();
+    });
+  });
+
+  document.getElementById('btnBackMain').onclick = () => {
+    currentCases = [];
+    document.getElementById('resultCount').textContent = '';
+    if (selectedOwnerKey === 'favourite') {
+      renderFavouriteList();
+      return;
+    }
+    const owner = _owners.find(o => o.key === selectedOwnerKey);
+    const ids = owner ? owner.ids : [...new Set(_owners.flatMap(o => o.ids))];
+    renderAccountList(ids);
+  };
+
+  document.getElementById('accountInput').addEventListener('input', handleAccountInput);
+  document.getElementById('accountInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('btnSearch').click();
+    if (e.key === 'Escape') document.getElementById('autocomplete').classList.add('hidden');
+  });
+  document.addEventListener('click', e => {
+    if (!e.target.closest('#accountInput') && !e.target.closest('#autocomplete')) {
+      document.getElementById('autocomplete').classList.add('hidden');
+    }
+  });
+
+  // 담당자 탭 동적 렌더 + 이벤트 바인딩 (renderOwnerTabs 에서 처리)
+
+  // Favourite 추가/해제 버튼
+  document.getElementById('btnAddFavourite').addEventListener('click', () => {
+    if (!_lastTargets || _lastTargets.length !== 1) return;
+    const { crmId, name } = _lastTargets[0];
+    if (isFavourite(crmId)) {
+      removeFavourite(crmId);
+    } else {
+      addFavourite(crmId, name);
+    }
+    updateFavouriteBtn();
+  });
+
+  // 상세 패널
+  document.getElementById('btnCloseDetail').onclick = closeDetail;
+  document.getElementById('btnRefreshDetail').onclick = () => {
+    if (!selectedCase) return;
+    const btn = document.getElementById('btnRefreshDetail');
+    btn.style.transition = 'transform 0.4s';
+    btn.style.transform = 'rotate(360deg)';
+    setTimeout(() => { btn.style.transition = ''; btn.style.transform = ''; }, 420);
+    const tab = _activeDetailTab;
+    if (tab === 'attachments') {
+      loadAttachments(selectedCase.sys_id);
+    } else {
+      openDetail(selectedCase).then(() => switchDetailTab(tab));
+    }
+  };
+  document.getElementById('btnAi').onclick = runAiInsight;
+  document.getElementById('btnCopyAi').addEventListener('click', async (e) => {
+    e.stopPropagation();
+    copyAiFull(_lastAiInsight);
+    const btn = document.getElementById('btnCopyAi');
+    const orig = btn.innerHTML;
+    btn.textContent = t('copied2');
+    setTimeout(() => { btn.innerHTML = orig; }, 1400);
+  });
+
+  // 케이스 제목 복사 (correlation_display + short_description)
+  document.getElementById('btnCopyTitle').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!selectedCase) return;
+    const caseNum = selectedCase.correlation_display || selectedCase.number || '';
+    const title = selectedCase.short_description || '';
+    const copyVal = `${caseNum} ${title}`.trim();
+    if (!copyVal) return;
+    navigator.clipboard.writeText(copyVal).then(() => {
+      const btn = document.getElementById('btnCopyTitle');
+      btn.textContent = '✅';
+      setTimeout(() => { btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M11 2H5a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1zM5 1h6a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2z"/><path d="M3 4H2a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-1H8v1H2V5h1V4z"/></svg>`; }, 1200);
+    });
+  });
+
+  // 담당자 이메일 복사
+  document.getElementById('btnCopyAssignee').addEventListener('click', (e) => {
+    e.stopPropagation();
+    // 이메일 있으면 이메일, 없으면 사번(괄호 안 I-number) 추출
+    let copyVal = selectedCase?._assigneeEmail || '';
+    if (!copyVal) {
+      const raw = selectedCase?.assigned_to || '';
+      const m = raw.match(/\(([A-Za-z0-9]+)\)\s*$/);
+      copyVal = m ? m[1] : raw;
+    }
+    if (!copyVal) return;
+    navigator.clipboard.writeText(copyVal).then(() => {
+      const btn = document.getElementById('btnCopyAssignee');
+      btn.textContent = '✅';
+      setTimeout(() => { btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M11 2H5a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1zM5 1h6a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2z"/><path d="M3 4H2a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-1H8v1H2V5h1V4z"/></svg>`; }, 1200);
+    });
+  });
+
+  // 메모 타입 토글
+  document.querySelectorAll('.memo-type-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.memo-type-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      _memoType = btn.dataset.type;
+      document.getElementById('memoTypeNotice').textContent = _memoType === 'internal'
+        ? t('memoInternal')
+        : t('memoExternal');
+    });
+  });
+
+  // 메모 저장 → ITSM PATCH
+  document.getElementById('btnSaveMemo').onclick = async () => {
+    if (!selectedCase) return;
+    const text = document.getElementById('memoInput').value.trim();
+    if (!text) return;
+    const btn = document.getElementById('btnSaveMemo');
+    btn.disabled = true;
+    btn.textContent = '…';
+    const field = _memoType === 'internal' ? 'work_notes' : 'comments';
+    try {
+      await itsmFetch(`/api/now/table/sn_customerservice_case/${selectedCase.sys_id}__PATCH__${JSON.stringify({ [field]: text })}`);
+      // journal에 임시 append → 히스토리 즉시 반영
+      const typeLabel = _memoType === 'internal' ? 'Work notes' : 'Additional comments';
+      const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
+      const newEntry = `\n${now} - ${myUserName || 'Me'} (${typeLabel})\n${text}`;
+      if (selectedCase) {
+        selectedCase._journal = newEntry + '\n' + (selectedCase._journal || '');
+        renderMemoHistory(selectedCase._journal);
+      }
+      document.getElementById('memoInput').value = '';
+      btn.textContent = '✅';
+      setTimeout(() => { btn.textContent = t('add'); btn.disabled = false; }, 1500);
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = t('add');
+      alert(`${t('memoFailed')}: ${e.message}`);
+    }
+  };
+
+  // Retrieve Case — External Info 메시지 입력 후 케이스를 In Progress로 전환
+  document.getElementById('btnRetrieveCase').onclick = () => {
+    if (!selectedCase) return;
+    const DEFAULT_MSG = 'Returning to SAP for further processing.';
+    const overlay = document.createElement('div');
+    overlay.className = 'retrieve-overlay';
+    overlay.innerHTML = `
+      <div class="retrieve-modal">
+        <div class="retrieve-modal-title">Retrieve Case</div>
+        <p class="retrieve-modal-desc">External Info로 저장되며 케이스가 In Progress로 변경됩니다.</p>
+        <textarea id="retrieveMsgInput" class="memo-input" rows="3">${DEFAULT_MSG}</textarea>
+        <div class="retrieve-modal-actions">
+          <button id="btnRetrieveSubmit" class="btn-primary btn-sm">Retrieve</button>
+          <button id="btnRetrieveCancel" class="btn-ghost btn-sm">Cancel</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    document.getElementById('btnRetrieveCancel').onclick = () => overlay.remove();
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+    document.getElementById('btnRetrieveSubmit').onclick = async () => {
+      const msg = document.getElementById('retrieveMsgInput').value.trim();
+      if (!msg) return;
+      const submitBtn = document.getElementById('btnRetrieveSubmit');
+      submitBtn.disabled = true;
+      submitBtn.textContent = '…';
+      try {
+        const r = await fetch(getRetrieveCaseUrl(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sysCaseId: selectedCase.sys_id, message: msg })
+        });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || r.status);
+        overlay.remove();
+        alert('✅ Retrieve Case 완료 — 케이스가 In Progress로 변경되었습니다.');
+      } catch (e) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Retrieve';
+        alert('❌ 실패: ' + e.message);
+      }
+    };
+  };
+
+  // 첨부 파일 선택
+  document.getElementById('attachFileInput').addEventListener('change', (e) => {
+    const files = e.target.files;
+    const nameEl = document.getElementById('attachFileName');
+    const uploadBtn = document.getElementById('btnUploadAttach');
+    if (files.length) {
+      nameEl.textContent = files.length === 1 ? files[0].name : `${files.length}${t('filesCount')}`;
+      uploadBtn.disabled = false;
+    } else {
+      nameEl.textContent = '';
+      uploadBtn.disabled = true;
+    }
+  });
+
+  // 첨부 업로드 버튼
+  document.getElementById('btnUploadAttach').addEventListener('click', async () => {
+    if (!selectedCase) return;
+    const input = document.getElementById('attachFileInput');
+    const files = Array.from(input.files);
+    if (!files.length) return;
+    const progress = document.getElementById('attachUploadProgress');
+    const uploadBtn = document.getElementById('btnUploadAttach');
+    uploadBtn.disabled = true;
+    progress.classList.remove('hidden');
+    for (let i = 0; i < files.length; i++) {
+      progress.textContent = `${t('uploadProgress')} (${i + 1}/${files.length}) ${files[i].name}`;
+      try {
+        await uploadAttachment(selectedCase.sys_id, files[i]);
+      } catch (e) {
+        alert(`${files[i].name} ${t('uploadFailed')}: ${e.message}`);
+      }
+    }
+    progress.classList.add('hidden');
+    input.value = '';
+    document.getElementById('attachFileName').textContent = '';
+    uploadBtn.disabled = true;
+    // 목록 새로고침
+    _attachSysId = null;
+    loadAttachments(selectedCase.sys_id);
+  });
+
+  // 상세 탭 전환
+  document.querySelectorAll('.detail-tab').forEach(btn => {
+    btn.addEventListener('click', () => switchDetailTab(btn.dataset.tab));
+  });
+
+  // MCC / Watch 버튼 — HTML에 정적으로 있음
+  document.getElementById('btnMcc').onclick = openMccModal;
+  document.getElementById('btnWatch').onclick = toggleWatchPanel;
+  document.getElementById('btnWatchClose').onclick = () => {
+    document.getElementById('watchPanel').classList.add('hidden');
+  };
+
+  // 상세화면 Favourite 버튼
+  document.getElementById('btnFavCase').onclick = async () => {
+    if (!selectedCase) return;
+    const btn = document.getElementById('btnFavCase');
+    if (isFavouriteCase(selectedCase.sys_id)) {
+      await removeFavouriteCase(selectedCase.sys_id);
+      btn.textContent = '☆'; btn.classList.remove('active');
+    } else {
+      await addFavouriteCase(selectedCase);
+      btn.textContent = '⭐'; btn.classList.add('active');
+    }
+    // 목록 아이템 별표도 동기화
+    document.querySelectorAll(`.case-fav-btn[data-sysid="${selectedCase.sys_id}"]`).forEach(b => {
+      b.textContent = isFavouriteCase(selectedCase.sys_id) ? '⭐' : '☆';
+      b.classList.toggle('active', isFavouriteCase(selectedCase.sys_id));
+    });
+  };
+}
+
+document.addEventListener('DOMContentLoaded', init);
+
+// ── 담당자 탭 동적 렌더 ─────────────────────────────────────────────
+function renderOwnerTabs() {
+  const scrollEl = document.getElementById('ownerTabsScroll');
+  scrollEl.innerHTML = '';
+  _owners.forEach((o, idx) => {
+    const btn = document.createElement('button');
+    btn.className = 'owner-tab';
+    btn.dataset.key = o.key;
+    btn.dataset.idx = idx;
+    btn.textContent = o.name.split(' ')[0];
+    btn.addEventListener('click', async () => {
+      document.querySelectorAll('.owner-tab').forEach(t => t.classList.remove('active'));
+      btn.classList.add('active');
+      selectedOwnerKey = o.key;
+      currentCases = [];
+      document.getElementById('resultCount').textContent = '';
+      await renderAccountList(o.ids);
+    });
+    scrollEl.appendChild(btn);
+  });
+
+  // 고정 탭(all, favourite) 이벤트 바인딩
+  document.querySelectorAll('.owner-tab-fixed').forEach(tab => {
+    tab.onclick = async () => {
+      document.querySelectorAll('.owner-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      selectedOwnerKey = tab.dataset.key;
+      currentCases = [];
+      document.getElementById('resultCount').textContent = '';
+      if (selectedOwnerKey === 'notifications') {
+        await renderNotifications();
+      } else if (selectedOwnerKey === 'favourite') {
+        await renderFavouriteList();
+      } else {
+        const ids = [...new Set(_owners.flatMap(o => o.ids))];
+        await renderAccountList(ids);
+      }
+    };
+  });
+
+  // 시작탭 버튼도 동적으로 재구성
+  renderStartTabButtons();
+}
+
+// ── 시작탭 버튼 동적 렌더 ──────────────────────────────────────────
+function renderStartTabButtons() {
+  const row = document.getElementById('startTabRow');
+  row.innerHTML = '';
+
+  const fixed = [
+    { key: 'notifications', label: () => t('tabNotifications') },
+    { key: 'all', label: () => t('tabAll') },
+    { key: 'favourite', label: () => '⭐ Favourite' }
+  ];
+
+  const addBtn = (key, label) => {
+    const btn = document.createElement('button');
+    btn.className = 'start-tab-btn';
+    btn.dataset.key = key;
+    btn.textContent = label;
+    btn.onclick = () => {
+      document.querySelectorAll('.start-tab-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      browserAPI.storage.local.set({ startTab: ownerKeyToStartTab(key) });
+    };
+    row.appendChild(btn);
+    return btn;
+  };
+
+  addBtn('notifications', t('tabNotifications'));
+  addBtn('all', t('tabAll'));
+  _owners.forEach(o => addBtn(o.key, o.name.split(' ')[0]));
+  addBtn('favourite', '⭐ Favourite');
+
+  // 현재 저장된 시작탭 active 표시
+  browserAPI.storage.local.get('startTab', ({ startTab }) => {
+    const key = startTabToOwnerKey(startTab);
+    document.querySelectorAll('.start-tab-btn').forEach(b =>
+      b.classList.toggle('active', b.dataset.key === key));
+  });
+}
+
+// ── 설정 — 팀원 관리 UI ────────────────────────────────────────────
+function initTeamSettings() {
+  renderTeamList();
+
+  document.getElementById('btnAddOwner').onclick = () => openOwnerEditor(null);
+  document.getElementById('btnResetOwners').onclick = () => {
+    const btn = document.getElementById('btnResetOwners');
+    if (btn.dataset.confirmPending === '1') {
+      browserAPI.storage.local.remove('owners', () => {
+        _owners = [...DEFAULT_OWNERS.map(o => ({ ...o, ids: [...o.ids] }))];
+        renderTeamList();
+        renderOwnerTabs();
+        btn.textContent = '↺ Reset';
+        btn.style.color = '';
+        delete btn.dataset.confirmPending;
+      });
+    } else {
+      btn.dataset.confirmPending = '1';
+      btn.textContent = '✓ Sure?';
+      btn.style.color = 'var(--error)';
+    }
+  };
+  document.getElementById('settingsAiUrl').addEventListener('change', e => {
+    _aiBase = e.target.value.trim().replace(/\/$/, '') || DEFAULT_AI_BASE;
+    browserAPI.storage.local.set({ aiBase: _aiBase });
+  });
+}
+
+function renderTeamList() {
+  const list = document.getElementById('ownerList');
+  list.innerHTML = '';
+  _owners.forEach((o, idx) => {
+    const row = document.createElement('div');
+    row.className = 'owner-list-row';
+    row.innerHTML = `
+      <div class="owner-list-info">
+        <span class="owner-list-name">${escHtml(o.name)}</span>
+        <span class="owner-list-count">${o.ids.length} accounts</span>
+      </div>
+      <div class="owner-list-actions">
+        <button class="btn-ghost btn-xs" data-idx="${idx}" data-action="edit">✏️</button>
+        <button class="btn-ghost btn-xs owner-del-btn" data-idx="${idx}" data-action="delete">🗑</button>
+      </div>`;
+    list.appendChild(row);
+  });
+
+  list.querySelectorAll('[data-action="edit"]').forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      openOwnerEditor(parseInt(btn.dataset.idx));
+    };
+  });
+  list.querySelectorAll('[data-action="delete"]').forEach(btn => {
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      const idx = parseInt(btn.dataset.idx);
+      const row = btn.closest('.owner-list-row');
+      // 인라인 확인 — confirm() 쓰면 포커스 이동으로 설정패널이 닫힘
+      if (row.dataset.confirmPending === '1') {
+        _owners.splice(idx, 1);
+        saveOwners();
+        renderTeamList();
+        renderOwnerTabs();
+      } else {
+        row.dataset.confirmPending = '1';
+        btn.textContent = '✓ Sure?';
+        btn.style.color = 'var(--error)';
+      }
+    };
+  });
+}
+
+async function doAccSearch(q, owner, searchInput, resultsEl, onSelect) {
+  try {
+    // ITSM customer_account 글로벌 검색 (메인 autocomplete와 동일 패턴)
+    const isNumeric = /^\d+$/.test(q);
+    const query = isNumeric
+      ? `u_sap_crm_bp_numberSTARTSWITH${encodeURIComponent(q)}^ORnumberSTARTSWITH${encodeURIComponent(q)}`
+      : `nameCONTAINS${encodeURIComponent(q)}`;
+    const path = `/api/now/table/customer_account?sysparm_query=${query}^ORDERBYDESCu_sap_crm_bp_number&sysparm_fields=name,number,u_sap_crm_bp_number&sysparm_exclude_reference_link=true&sysparm_limit=10`;
+    const resp = await new Promise((resolve, reject) => {
+      browserAPI.runtime.sendMessage({ type: 'ITSM_QUERY', path }, r => {
+        if (r?.ok) resolve(r.data);
+        else reject(new Error(r?.error || 'ITSM 오류'));
+      });
+    });
+    if (searchInput.value.trim() !== q) return; // stale
+    const results = (resp?.result || [])
+      .sort((a, b) => (b.u_sap_crm_bp_number ? 1 : 0) - (a.u_sap_crm_bp_number ? 1 : 0));
+    if (!results.length) {
+      resultsEl.innerHTML = '<div class="acc-result-searching">No results</div>';
+      return;
+    }
+    resultsEl.innerHTML = results.map(a => {
+      const crmId = a.u_sap_crm_bp_number || a.number || '';
+      const name = (a.name || '').replace(/\s*\([^)]*\)\s*$/, '').trim();
+      const crmStr = crmId.replace(/^0+/, '');
+      return `<div class="acc-result-item" data-crmid="${escHtml(crmId)}" data-name="${escHtml(a.name || '')}">
+        <span class="acc-result-name">${escHtml(name)}</span>
+        <span class="acc-result-id">CRM ${escHtml(crmStr)}</span>
+      </div>`;
+    }).join('');
+    resultsEl.querySelectorAll('.acc-result-item').forEach(el => {
+      el.onclick = (e) => { e.stopPropagation(); onSelect(el.dataset.crmid); };
+    });
+  } catch (err) {
+    if (searchInput.value.trim() === q) {
+      resultsEl.innerHTML = `<div class="acc-result-searching">Error: ${escHtml(err.message)}</div>`;
+    }
+  }
+}
+
+function openOwnerEditor(idx) {
+  const isNew = idx === null;
+  const owner = isNew ? { key: '', name: '', ids: [] } : { ..._owners[idx], ids: [..._owners[idx].ids] };
+
+  const modal = document.getElementById('ownerEditorModal');
+  // 모달 내부 클릭이 document까지 bubbling되면 settingsPanel 닫힘 — 차단
+  document.querySelector('#ownerEditorModal .modal-box').onclick = (e) => e.stopPropagation();
+  document.getElementById('ownerEditorTitle').textContent = isNew ? 'Add Member' : 'Edit Member';
+  document.getElementById('ownerNameInput').value = owner.name;
+  renderOwnerAccountList(owner.ids);
+
+  // 계정 검색
+  const searchInput = document.getElementById('ownerAccSearch');
+  searchInput.value = '';
+  document.getElementById('ownerAccResults').innerHTML = '';
+
+  let _accSearchTimer = null;
+  searchInput.oninput = () => {
+    clearTimeout(_accSearchTimer);
+    const q = searchInput.value.trim();
+    const resultsEl = document.getElementById('ownerAccResults');
+    if (q.length < 2) { resultsEl.innerHTML = ''; return; }
+    resultsEl.innerHTML = '<div class="acc-result-searching">Searching…</div>';
+    _accSearchTimer = setTimeout(() => doAccSearch(q, owner, searchInput, resultsEl, (crmId) => {
+      if (!owner.ids.includes(crmId)) {
+        owner.ids.push(crmId);
+        renderOwnerAccountList(owner.ids);
+      }
+      searchInput.value = '';
+      resultsEl.innerHTML = '';
+    }), 350);
+  };
+
+  document.getElementById('btnOwnerEditorSave').onclick = (e) => {
+    e.stopPropagation();
+    const name = document.getElementById('ownerNameInput').value.trim();
+    if (!name) { alert('Name is required'); return; }
+    const key = name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+    if (isNew) {
+      _owners.push({ key, name, ids: owner.ids });
+    } else {
+      _owners[idx] = { key: _owners[idx].key, name, ids: owner.ids };
+    }
+    saveOwners();
+    renderTeamList();
+    // renderOwnerTabs 후 현재 선택 탭 active 복원
+    const prevKey = selectedOwnerKey;
+    renderOwnerTabs();
+    document.querySelectorAll('.owner-tab').forEach(t => {
+      t.classList.toggle('active', t.dataset.key === prevKey || (prevKey === 'all' && t.dataset.key === 'all'));
+    });
+    // account 뷰일 때만 재렌더 (케이스/상세 보는 중이면 건드리지 않음)
+    if (_currentView === 'account') {
+      const updatedOwner = _owners.find(o => o.key === prevKey);
+      if (updatedOwner) renderAccountList(updatedOwner.ids);
+    }
+    modal.classList.add('hidden');
+  };
+
+  document.getElementById('btnOwnerEditorCancel').onclick = (e) => { e.stopPropagation(); modal.classList.add('hidden'); };
+  document.getElementById('btnOwnerEditorCancel2').onclick = (e) => { e.stopPropagation(); modal.classList.add('hidden'); };
+  modal.classList.remove('hidden');
+
+  function renderOwnerAccountList(ids) {
+    document.getElementById('ownerAccList').innerHTML = ids.length === 0
+      ? '<span class="owner-acc-empty">No accounts yet</span>'
+      : ids.map((id, i) => {
+          const accs = koreaAccounts || [];
+          const acc = accs.find(a => String(a.crmId) === String(id));
+          const label = acc ? acc.name.replace(/\s*\([^)]*\)\s*$/, '').trim() : id;
+          return `<span class="owner-acc-chip">${escHtml(label)} <button class="chip-del" data-i="${i}">×</button></span>`;
+        }).join('');
+
+    document.getElementById('ownerAccList').querySelectorAll('.chip-del').forEach(btn => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        owner.ids.splice(parseInt(btn.dataset.i), 1);
+        renderOwnerAccountList(owner.ids);
+      };
+    });
+  }
+}
+
+function saveOwners() {
+  browserAPI.storage.local.set({ owners: _owners }, () => {
+    if (browserAPI.runtime.lastError) {
+      console.error('[CSM] saveOwners 실패:', browserAPI.runtime.lastError.message);
+    } else {
+      console.log('[CSM] saveOwners OK, count:', _owners.length, _owners.map(o => `${o.name}(${o.ids.length})`));
+    }
+  });
+}
+
+function ownerKeyToStartTab(key) {
+  if (key === 'notifications' || key === 'all' || key === 'favourite') return key;
+  const idx = _owners.findIndex(o => o.key === key);
+  return idx >= 0 ? `owner:${idx}` : 'notifications';
+}
+
+function startTabToOwnerKey(val) {
+  if (!val || val === 'notifications' || val === 'all' || val === 'favourite') return val || 'notifications';
+  if (val.startsWith('owner:')) {
+    const idx = parseInt(val.slice(6), 10);
+    return _owners[idx] ? _owners[idx].key : 'notifications';
+  }
+  const owner = _owners.find(o => o.key === val);
+  return owner ? owner.key : 'notifications';
+}
+
+// ═══════════ Notifications 탭 로직 ═══════════
+let _notifications = [];  // {id, caseNum, priority, summary, type, timestamp}
+
+// 백그라운드 체크 (UI 업데이트 없이 조용히 실행)
+async function checkUpdatesBackground() {
+  try {
+    await loadFavourites();
+    const cases = _favourites.filter(f => f.type === 'case');
+
+    // Favourite 케이스만 변경 체크
+    if (cases.length > 0) {
+      await checkCaseUpdates(cases);
+    }
+
+  } catch (error) {
+    console.warn('[CSM] Background check error:', error);
+  }
+}
+
+// 케이스 변경 체크 — Extension에서 직접 ITSM 조회
+async function checkCaseUpdates(cases) {
+  console.log(`[checkCaseUpdates] 요청: ${cases.length}개 케이스`);
+  cases.forEach(c => console.log(`  - ${c.number}`));
+
+  const { lastState } = await browserAPI.storage.local.get('lastState') || {};
+  console.log(`[checkCaseUpdates] lastState 키: ${Object.keys(lastState || {}).length}개`);
+
+  // Step 1: ITSM 직접 조회 (병렬)
+  const currentStates = {};
+  const chunks = chunkArray(cases, 5);
+
+  // 케이스 번호 → 케이스 객체 맵 (고객명 등 정보 필요)
+  const caseMap = {};
+  cases.forEach(c => { caseMap[c.number] = c; });
+
+  for (const chunk of chunks) {
+    await Promise.all(chunk.map(async (c) => {
+      try {
+        const fields = 'state,priority,sys_updated_on,comments_and_work_notes,account,assigned_to,short_description';
+        const data = await itsmFetch(
+          `/api/now/table/sn_customerservice_case/${c.sysId}?sysparm_fields=${fields}&sysparm_display_value=true`
+        );
+        const raw = data?.result || {};
+
+        currentStates[c.number] = {
+          state: getStr(raw.state),
+          priority: getStr(raw.priority),
+          sys_updated_on: getStr(raw.sys_updated_on),
+          last_journal: getStr(raw.comments_and_work_notes),
+          account: getStr(raw.account),
+          assignedTo: getStr(raw.assigned_to),
+          title: getStr(raw.short_description)
+        };
+      } catch (error) {
+        console.error(`[checkCaseUpdates] ${c.number} 조회 실패:`, error.message);
+        currentStates[c.number] = null;
+      }
+    }));
+  }
+
+  console.log(`[checkCaseUpdates] 조회 완료: ${Object.keys(currentStates).length}개`);
+
+  // Step 2: Diff 계산
+  const changes = [];
+  for (const [caseNum, current] of Object.entries(currentStates)) {
+    if (!current) continue;
+    const prev = (lastState || {})[caseNum];
+    if (!prev) continue; // 첫 조회는 변경 아님
+
+    const baseChange = {
+      caseNum,
+      title: current.title,
+      priority: current.priority,
+      account: current.account,
+      assignedTo: current.assignedTo,
+      timestamp: new Date().toISOString()
+    };
+
+    if (prev.state !== current.state) {
+      changes.push({
+        ...baseChange,
+        type: 'state_change',
+        oldState: prev.state,
+        newState: current.state
+      });
+    } else if (prev.last_journal !== current.last_journal) {
+      changes.push({
+        ...baseChange,
+        type: 'journal_update',
+        newJournal: current.last_journal
+      });
+    } else if (prev.priority !== current.priority) {
+      changes.push({
+        ...baseChange,
+        type: 'priority_change',
+        oldPriority: prev.priority,
+        newPriority: current.priority
+      });
+    }
+  }
+
+  console.log(`[checkCaseUpdates] 변경 감지: ${changes.length}건`);
+  if (changes.length > 0) {
+    changes.forEach(c => console.log(`  - ${c.caseNum}: ${c.type}`));
+  }
+
+  // Step 3: lastState 업데이트 (항상 업데이트 - 다음 조회 기준점)
+  await browserAPI.storage.local.set({ lastState: currentStates });
+
+  if (changes.length === 0) {
+    console.log(`[checkCaseUpdates] 변경 없음`);
+    return;
+  }
+
+  // Step 4: AI 분석 (의미있는 변경만 필터링)
+  try {
+    const response = await fetch(`${_aiBase}/api/ai/analyze-changes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ changes })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'unknown');
+      console.warn('[checkCaseUpdates] AI 분석 실패:', response.status, errorText);
+      return;
+    }
+
+    const { updates } = await response.json();
+    console.log(`[checkCaseUpdates] AI 분석 완료: ${updates.length}건 의미있는 변경`);
+
+    if (updates && updates.length > 0) {
+      updates.forEach(u => console.log(`  [알림] ${u.caseNum}: ${u.type} - ${u.summary}`));
+      await addNotifications(updates);
+    }
+  } catch (error) {
+    console.error('[checkCaseUpdates] AI 분석 오류:', error);
+  }
+}
+
+function chunkArray(arr, size) {
+  const chunks = [];
+  for (let i = 0; i < arr.length; i += size) {
+    chunks.push(arr.slice(i, i + size));
+  }
+  return chunks;
+}
+
+// 알림 추가 헬퍼
+async function addNotifications(updates) {
+  const { notifications } = await browserAPI.storage.local.get('notifications') || {};
+  const existing = notifications || [];
+
+  const newNotifs = updates.map(u => ({
+    id: `${u.caseNum}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+    ...u
+  }));
+
+  // 같은 케이스의 기존 알림 제거 (최신 것만 유지)
+  const newCaseNums = new Set(newNotifs.map(n => n.caseNum));
+  const filtered = existing.filter(n => !newCaseNums.has(n.caseNum));
+
+  _notifications = [...newNotifs, ...filtered].slice(0, 50);
+  await browserAPI.storage.local.set({ notifications: _notifications });
+  updateNotifBadge();
+}
+
+async function checkUpdates() {
+  const notifBusy = document.getElementById('notifBusy');
+  const notifEmpty = document.getElementById('notifEmpty');
+  const notifList = document.getElementById('notifList');
+
+  // 로딩 표시
+  notifBusy.classList.remove('hidden');
+  notifEmpty.classList.add('hidden');
+  notifList.classList.add('hidden');
+
+  try {
+    // 즐겨찾기 케이스 목록
+    const cases = _favourites.filter(f => f.type === 'case');
+    if (cases.length === 0) {
+      notifBusy.classList.add('hidden');
+      notifEmpty.classList.remove('hidden');
+      return;
+    }
+
+    // checkCaseUpdates 호출 (ITSM 조회 + AI 분석)
+    await checkCaseUpdates(cases);
+
+    notifBusy.classList.add('hidden');
+
+  } catch (error) {
+    console.error('Check updates failed:', error);
+    notifBusy.classList.add('hidden');
+    notifEmpty.textContent = t('itsmError');
+    notifEmpty.classList.remove('hidden');
+  }
+}
+
+async function renderNotifications() {
+  const startKey = selectedOwnerKey;
+
+  const tabContent = document.getElementById('tabNotifications');
+  const accountList = document.getElementById('accountList');
+  const caseList = document.getElementById('caseList');
+  const emptyState = document.getElementById('emptyState');
+  const errorState = document.getElementById('errorState');
+  const notifBusy = document.getElementById('notifBusy');
+  const notifEmpty = document.getElementById('notifEmpty');
+  const notifList = document.getElementById('notifList');
+  const notifItems = document.getElementById('notifItems');
+
+  // 다른 탭 숨기기
+  accountList.classList.add('hidden');
+  caseList.classList.add('hidden');
+  emptyState.classList.add('hidden');
+  errorState.classList.add('hidden');
+  tabContent.classList.remove('hidden');
+
+  // Favourite 케이스가 있으면 업데이트 체크 실행
+  await loadFavourites();
+
+  // ⚠️ 탭 변경 감지 → 렌더링 중단
+  if (selectedOwnerKey !== startKey) {
+    console.log(`[renderNotifications] 탭 변경 감지, 렌더링 중단`);
+    return;
+  }
+
+  const favCases = _favourites.filter(f => f.type === 'case');
+  if (favCases.length > 0) {
+    notifBusy.classList.remove('hidden');
+    notifEmpty.classList.add('hidden');
+    notifList.classList.add('hidden');
+    await checkUpdates();
+
+    // ⚠️ checkUpdates 완료 후에도 탭 확인
+    if (selectedOwnerKey !== startKey) {
+      console.log(`[renderNotifications] checkUpdates 완료 후 탭 변경 감지, 렌더링 중단`);
+      return;
+    }
+
+    notifBusy.classList.add('hidden');
+  }
+
+  // 저장된 알림 로드
+  const { notifications } = await browserAPI.storage.local.get('notifications') || {};
+  _notifications = notifications || [];
+
+  if (_notifications.length === 0) {
+    notifEmpty.classList.remove('hidden');
+    notifList.classList.add('hidden');
+    return;
+  }
+
+  // 알림 렌더링
+  notifEmpty.classList.add('hidden');
+  notifList.classList.remove('hidden');
+
+  notifItems.innerHTML = '';
+  _notifications.forEach(n => {
+    notifItems.appendChild(createNotificationItem(n));
+  });
+
+  // Clear All 버튼
+  document.getElementById('btnClearAllNotif').onclick = clearAllNotifications;
+}
+
+function createNotificationItem(notif) {
+  const div = document.createElement('div');
+  div.className = 'notif-item';
+  div.dataset.priority = notif.priority;
+  div.dataset.id = notif.id;
+
+  // 우선순위 아이콘
+  const icons = { high: '🔴', medium: '🟡', low: '🟢' };
+  const icon = document.createElement('span');
+  icon.className = 'notif-icon';
+  icon.textContent = icons[notif.priority] || '⚪';
+
+  // 본문
+  const body = document.createElement('div');
+  body.className = 'notif-body';
+
+  const caseNum = document.createElement('div');
+  caseNum.className = 'notif-case';
+  caseNum.textContent = notif.caseNum;
+
+  // 케이스 제목
+  const title = document.createElement('div');
+  title.className = 'notif-title';
+  title.textContent = notif.title || '(제목 없음)';
+
+  const summary = document.createElement('div');
+  summary.className = 'notif-summary';
+  summary.textContent = notif.summary;
+
+  // 추가 정보 (고객명, 담당자)
+  const info = document.createElement('div');
+  info.className = 'notif-info';
+  const infoParts = [];
+  if (notif.account) infoParts.push(`🏢 ${notif.account}`);
+  if (notif.assignedTo) infoParts.push(`👤 ${notif.assignedTo}`);
+  info.textContent = infoParts.join(' | ');
+
+  const meta = document.createElement('div');
+  meta.className = 'notif-meta';
+
+  const time = document.createElement('span');
+  time.className = 'notif-time';
+  time.textContent = `🕐 ${formatTimeAgo(notif.timestamp)}`;
+
+  const type = document.createElement('span');
+  type.className = 'notif-type';
+  type.textContent = t(`notifType${capitalize(notif.type)}`);
+
+  meta.appendChild(time);
+  meta.appendChild(type);
+
+  body.appendChild(caseNum);
+  body.appendChild(title);
+  body.appendChild(summary);
+  if (info.textContent) body.appendChild(info);
+  body.appendChild(meta);
+
+  // 삭제 버튼
+  const actions = document.createElement('div');
+  actions.className = 'notif-actions';
+
+  const delBtn = document.createElement('button');
+  delBtn.className = 'notif-del';
+  delBtn.textContent = '✕';
+  delBtn.onclick = (e) => {
+    e.stopPropagation();
+    deleteNotification(notif.id);
+  };
+
+  actions.appendChild(delBtn);
+
+  // 클릭 시 케이스 상세 열기 (알림은 유지 - 사용자가 X로 명시적 삭제만 가능)
+  div.onclick = () => {
+    navigateToCase(notif.caseNum, notif);
+  };
+
+  div.appendChild(icon);
+  div.appendChild(body);
+  div.appendChild(actions);
+
+  return div;
+}
+
+async function deleteNotification(id) {
+  _notifications = _notifications.filter(n => n.id !== id);
+  await browserAPI.storage.local.set({ notifications: _notifications });
+  updateNotifBadge();
+
+  // DOM에서 해당 알림만 제거 (전체 새로고침 안 함)
+  const notifItem = document.querySelector(`.notif-item[data-id="${id}"]`);
+  if (notifItem) {
+    notifItem.remove();
+  }
+
+  // 알림이 모두 삭제되면 빈 상태 표시
+  if (_notifications.length === 0) {
+    document.getElementById('notifEmpty').classList.remove('hidden');
+    document.getElementById('notifList').classList.add('hidden');
+  }
+}
+
+async function clearAllNotifications() {
+  _notifications = [];
+  await browserAPI.storage.local.set({ notifications: [] });
+  updateNotifBadge();
+  await renderNotifications();
+}
+
+function updateNotifBadge() {
+  const badge = document.getElementById('notifBadge');
+  if (!badge) return; // DOM이 아직 준비 안 됐거나 사이드패널이 닫힌 상태
+  const count = _notifications.length;
+  badge.textContent = count;
+  badge.dataset.count = count;
+}
+
+async function navigateToCase(caseNum, notifObj = null) {
+  // 케이스 상세 열기
+  // 1. 현재 목록(currentCases)에서 찾기
+  let caseObj = currentCases.find(c => c.number === caseNum);
+
+  // 2. 없으면 _favourites에서 찾기
+  if (!caseObj) {
+    const fav = _favourites.find(f => f.type === 'case' && f.number === caseNum);
+    if (fav) {
+      // favourite 객체는 title 필드를 사용하지만, openDetail은 short_description을 기대
+      caseObj = {
+        ...fav,
+        short_description: fav.title,
+        sys_id: fav.sysId
+      };
+    }
+  }
+
+  // 3. 여전히 없으면 ITSM 직접 조회
+  if (!caseObj) {
+    try {
+      console.log(`[navigateToCase] ${caseNum} ITSM 조회 중...`);
+      const data = await itsmFetch(
+        `/api/now/table/sn_customerservice_case?sysparm_query=number=${caseNum}&sysparm_display_value=true&sysparm_fields=number,short_description,state,priority,account.name,sys_id,sys_updated_on`
+      );
+
+      if (data?.result && data.result.length > 0) {
+        const raw = data.result[0];
+        caseObj = normalizeCase(raw);
+      } else {
+        console.error(`[navigateToCase] ${caseNum} 조회 결과 없음`);
+        alert(`케이스를 찾을 수 없습니다: ${caseNum}`);
+        return;
+      }
+    } catch (error) {
+      console.error('[navigateToCase] ITSM 조회 실패:', error);
+      alert(`케이스 조회 실패: ${error.message}`);
+      return;
+    }
+  }
+
+  // 케이스 상세 화면 열기 (기존 openDetail 함수 사용)
+  // loadCaseDetail은 c.sys_id를 사용하지만, 일부 케이스 객체는 sysId (카멜케이스) 사용
+  if (!caseObj.sys_id && caseObj.sysId) {
+    caseObj.sys_id = caseObj.sysId;
+  }
+
+  await openDetail(caseObj);
+  await loadCaseDetail(caseObj);
+}
+
+function capitalize(str) {
+  return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+function formatTimeAgo(isoString) {
+  const now = new Date();
+  const time = new Date(isoString);
+  const diffMs = now - time;
+  const diffMins = Math.floor(diffMs / 60000);
+  if (diffMins < 1) return '방금 전';
+  if (diffMins < 60) return `${diffMins}분 전`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours}시간 전`;
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays}일 전`;
+}
+
+// 2. 새로고침 시 백그라운드 체크 (모든 탭에서 실행)
+document.getElementById('btnRefresh').addEventListener('click', () => {
+  checkUpdatesBackground();
+});
+
+// 페이지 로드 시 notifications 배지 초기화
+(async () => {
+  const { notifications } = await browserAPI.storage.local.get('notifications') || {};
+  _notifications = notifications || [];
+  updateNotifBadge();
+})();

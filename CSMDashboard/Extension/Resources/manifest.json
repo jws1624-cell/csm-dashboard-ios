@@ -1,0 +1,39 @@
+{
+  "manifest_version": 2,
+  "name": "CSM Case Dashboard",
+  "version": "2.0.0",
+  "description": "SAP CSM Team — ITSM Case Dashboard with AI Insight",
+
+  "permissions": [
+    "tabs",
+    "cookies",
+    "storage",
+    "https://itsm.services.sap/*",
+    "https://*.hana.ondemand.com/*"
+  ],
+
+  "background": {
+    "scripts": ["background.js"],
+    "persistent": false
+  },
+
+  "browser_action": {
+    "default_title": "CSM Case Dashboard",
+    "default_icon": {
+      "16": "images/icon-16.png",
+      "48": "images/icon-48.png",
+      "128": "images/icon-128.png"
+    },
+    "default_popup": "popup.html"
+  },
+
+  "icons": {
+    "16": "images/icon-16.png",
+    "48": "images/icon-48.png",
+    "128": "images/icon-128.png"
+  },
+
+  "web_accessible_resources": [
+    "korea-accounts.json"
+  ]
+}
