@@ -813,9 +813,59 @@ function itsmFetch(path, _retried = false) {
     })
     .catch(e => {
       // sendMessage 자체가 실패한 경우
-      if (e.message && e.message.includes('Extension')) {
-        console.error('[CSM] sendMessage 실패:', e.message);
+      console.error('[CSM] itsmFetch catch:', e);
+
+      const err = e.message || String(e);
+
+      // 세션 만료 에러 감지 (catch에서도)
+      const isSessionError = err.includes('ITSM 세션') || err.includes('g_ck') || err.includes('401')
+        || err.includes('세션 없음') || err.includes('로그인') || err.includes('SSO')
+        || err.includes('Safari에서') || err.includes('세션 만료') || err.includes('세션 확보');
+
+      console.log('[CSM] catch 에러 상세:', { err, isSessionError, _retried, hasRetrigger: typeof window.retriggerSso });
+
+      if (isSessionError && !_retried && typeof window.retriggerSso === 'function') {
+        console.log('[CSM] 🔄 catch에서 세션 만료 감지 - 자동 재연결 시작');
+
+        // 이미 재연결 중이면 기다림
+        if (_reconnecting) {
+          console.log('[CSM] 이미 재연결 중 - 대기');
+          return _reconnecting.then(() => {
+            console.log('[CSM] 재연결 완료 대기 후 재시도');
+            return new Promise(r => setTimeout(r, 200)).then(() => itsmFetch(path, true));
+          });
+        }
+
+        // 화면에도 표시
+        setProgress('🔄 ITSM 세션 재연결 중…');
+
+        // 재연결 Promise 생성
+        _reconnecting = new Promise((resolveReconnect, rejectReconnect) => {
+          // background.js의 g_ck 캐시 무효화
+          browserAPI.runtime.sendMessage({ type: 'INVALIDATE_SESSION' }).then(() => {
+            console.log('[CSM] background 세션 무효화 완료');
+
+            // iframe SSO 재실행
+            window.retriggerSso((success) => {
+              _reconnecting = null; // 완료
+              if (success) {
+                console.log('[CSM] ✅ 재연결 성공');
+                resolveReconnect();
+              } else {
+                console.error('[CSM] ❌ 재연결 실패');
+                setProgress('');
+                rejectReconnect();
+              }
+            });
+          }).catch(rejectReconnect);
+        });
+
+        // 재연결 후 재시도
+        return _reconnecting.then(() => {
+          return new Promise(r => setTimeout(r, 500)).then(() => itsmFetch(path, true));
+        });
       }
+
       throw e;
     });
 }
