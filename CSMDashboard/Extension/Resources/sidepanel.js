@@ -1,6 +1,24 @@
 'use strict';
 
-console.log('🔵 sidepanel.js 로드됨 - 버전: 2026-10-14-v7-showError');
+console.log('🔵 sidepanel.js 로드됨 - 버전: 2026-10-14-v8-auto');
+
+// 페이지 로드 시 자동으로 세션 상태 확인
+setTimeout(() => {
+  console.log('[CSM] 자동 세션 체크 시작');
+  browserAPI.runtime.sendMessage({ type: 'ITSM_QUERY', path: '/api/now/ui/user/current_user' }, (resp) => {
+    if (!resp || !resp.ok) {
+      const err = resp?.error || '';
+      if (err.includes('ITSM 세션') || err.includes('Safari에서') || err.includes('세션 확보')) {
+        console.log('[CSM] ⚠️ 세션 없음 감지 - 자동 재연결 시작');
+        document.body.insertAdjacentHTML('afterbegin', '<div style="position:fixed;top:0;left:0;right:0;background:#ff9800;color:#fff;padding:8px;text-align:center;z-index:99999">🔄 ITSM 세션 자동 연결 중...</div>');
+      } else {
+        console.log('[CSM] ✅ 세션 정상');
+      }
+    } else {
+      console.log('[CSM] ✅ 세션 정상');
+    }
+  });
+}, 2000);
 
 // Safari Extension 호환성 레이어
 const browserAPI = typeof browser !== 'undefined' ? browser : chrome;
@@ -510,7 +528,7 @@ function loadSeenStates() {
 
 function markCaseSeen(sysId, stateCode) {
   _seenCaseStates[sysId] = stateCode;
-  browserAPI.storage.local.set({ seenCaseStates: _seenCaseStates });
+  try { browserAPI.storage.local.set({ seenCaseStates: _seenCaseStates }); } catch(e) { console.warn("[CSM] Storage quota exceeded:", e); }
 }
 
 function isCaseStateChanged(sysId, currentCode) {
@@ -529,7 +547,7 @@ async function loadFavourites() {
 }
 
 function saveFavourites() {
-  browserAPI.storage.local.set({ favourites: _favourites });
+  try { browserAPI.storage.local.set({ favourites: _favourites }); } catch(e) { console.warn("[CSM] Storage quota exceeded:", e); }
 }
 
 function isFavourite(crmId) {
@@ -566,7 +584,7 @@ async function addFavouriteCase(c) {
     journal: journal,
     updatedAt: new Date().toISOString()
   };
-  await browserAPI.storage.local.set({ lastState: state });
+  try { await browserAPI.storage.local.set({ lastState: state }); } catch(e) { console.warn("[CSM] Storage quota exceeded:", e); }
 }
 
 async function removeFavouriteCase(sysId) {
@@ -579,7 +597,7 @@ async function removeFavouriteCase(sysId) {
     const { lastState } = await browserAPI.storage.local.get('lastState') || {};
     const state = lastState || {};
     delete state[removed.number];
-    await browserAPI.storage.local.set({ lastState: state });
+    try { await browserAPI.storage.local.set({ lastState: state }); } catch(e) { console.warn("[CSM] Storage quota exceeded:", e); }
   }
 }
 
@@ -745,140 +763,101 @@ function extractNoteLinks(rawJournal) {
 // ── ITSM 통신 (background로 위임, 세션 만료 시 자동 재연결) ──────────
 let _reconnecting = null; // 재연결 중인 Promise (중복 재연결 방지)
 
-function itsmFetch(path, _retried = false) {
+// background.js 없이 직접 ITSM API 호출
+async function itsmFetch(path, _retried = false) {
   console.log('[CSM] itsmFetch →', path.slice(0, 100), '_retried=', _retried);
 
-  // Promise 래핑 (Safari Extension 호환성)
-  return new Promise((resolve, reject) => {
-    browserAPI.runtime.sendMessage({ type: 'ITSM_QUERY', path }, (resp) => {
-      console.log('[CSM] itsmFetch 응답 받음:', { resp, lastError: browserAPI.runtime.lastError });
+  const ITSM_BASE = 'https://itsm.services.sap';
 
-      if (browserAPI.runtime.lastError) {
-        return reject(new Error(browserAPI.runtime.lastError.message));
-      }
-
-      resolve(resp);
-    });
-  }).then(resp => {
-      console.log('[CSM] itsmFetch then:', { resp });
-
-      if (!resp || !resp.ok) {
-        const err = resp?.error || 'ITSM 오류';
-        console.error('[CSM] ITSM 응답 실패:', err);
-
-        // 세션 만료 에러 감지 (background.js에서 "ITSM 세션" 메시지 포함)
-        const isSessionError = err.includes('ITSM 세션') || err.includes('g_ck') || err.includes('401')
-          || err.includes('세션 없음') || err.includes('로그인') || err.includes('SSO')
-          || err.includes('Safari에서') || err.includes('세션 만료');
-
-        // 디버그: 에러 메시지를 화면에 표시
-        console.log('[CSM] 에러 상세:', { err, isSessionError, _retried, hasRetrigger: typeof window.retriggerSso });
-
-        if (isSessionError && !_retried && typeof window.retriggerSso === 'function') {
-          console.log('[CSM] 🔄 세션 만료 감지 - 자동 재연결 시작');
-
-          // 이미 재연결 중이면 기다림
-          if (_reconnecting) {
-            console.log('[CSM] 이미 재연결 중 - 대기');
-            return _reconnecting.then(() => {
-              console.log('[CSM] 재연결 완료 대기 후 재시도');
-              return new Promise(r => setTimeout(r, 200)).then(() => itsmFetch(path, true));
-            });
-          }
-
-          // 화면에도 표시
-          setProgress('🔄 ITSM 세션 재연결 중…');
-
-          // 재연결 Promise 생성
-          _reconnecting = new Promise((resolveReconnect, rejectReconnect) => {
-            // background.js의 g_ck 캐시 무효화
-            browserAPI.runtime.sendMessage({ type: 'INVALIDATE_SESSION' }).then(() => {
-              console.log('[CSM] background 세션 무효화 완료');
-
-              // iframe SSO 재실행
-              window.retriggerSso((success) => {
-                _reconnecting = null; // 완료
-                if (success) {
-                  console.log('[CSM] ✅ 재연결 성공');
-                  resolveReconnect();
-                } else {
-                  console.error('[CSM] ❌ 재연결 실패');
-                  setProgress('');
-                  rejectReconnect();
-                }
-              });
-            });
-          });
-
-          // 재연결 후 재시도
-          return _reconnecting.then(() => {
-            return new Promise(r => setTimeout(r, 500)).then(() => itsmFetch(path, true));
-          });
-
-        } else {
-          throw new Error(err);
-        }
-      } else {
-        return resp.data;
-      }
-    })
-    .catch(e => {
-      // sendMessage 자체가 실패한 경우
-      console.error('[CSM] itsmFetch catch:', e);
-
-      const err = e.message || String(e);
-
-      // 세션 만료 에러 감지 (catch에서도)
-      const isSessionError = err.includes('ITSM 세션') || err.includes('g_ck') || err.includes('401')
-        || err.includes('세션 없음') || err.includes('로그인') || err.includes('SSO')
-        || err.includes('Safari에서') || err.includes('세션 만료') || err.includes('세션 확보');
-
-      console.log('[CSM] catch 에러 상세:', { err, isSessionError, _retried, hasRetrigger: typeof window.retriggerSso });
-
-      if (isSessionError && !_retried && typeof window.retriggerSso === 'function') {
-        console.log('[CSM] 🔄 catch에서 세션 만료 감지 - 자동 재연결 시작');
-
-        // 이미 재연결 중이면 기다림
-        if (_reconnecting) {
-          console.log('[CSM] 이미 재연결 중 - 대기');
-          return _reconnecting.then(() => {
-            console.log('[CSM] 재연결 완료 대기 후 재시도');
-            return new Promise(r => setTimeout(r, 200)).then(() => itsmFetch(path, true));
-          });
-        }
-
-        // 화면에도 표시
-        setProgress('🔄 ITSM 세션 재연결 중…');
-
-        // 재연결 Promise 생성
-        _reconnecting = new Promise((resolveReconnect, rejectReconnect) => {
-          // background.js의 g_ck 캐시 무효화
-          browserAPI.runtime.sendMessage({ type: 'INVALIDATE_SESSION' }).then(() => {
-            console.log('[CSM] background 세션 무효화 완료');
-
-            // iframe SSO 재실행
-            window.retriggerSso((success) => {
-              _reconnecting = null; // 완료
-              if (success) {
-                console.log('[CSM] ✅ 재연결 성공');
-                resolveReconnect();
-              } else {
-                console.error('[CSM] ❌ 재연결 실패');
-                setProgress('');
-                rejectReconnect();
-              }
-            });
-          }).catch(rejectReconnect);
+  // g_ck 획득
+  if (!window._gck || Date.now() >= window._gckExpiry) {
+    console.log('[CSM] g_ck 없음 또는 만료 - 재시도 필요');
+    if (!_retried && typeof window.retriggerSso === 'function') {
+      console.log('[CSM] 🔄 SSO 재연결 시작');
+      await new Promise((resolve) => {
+        window.retriggerSso((success) => {
+          console.log('[CSM] SSO 재연결 결과:', success);
+          resolve(success);
         });
+      });
+      await new Promise(r => setTimeout(r, 500));
+      return itsmFetch(path, true);
+    }
+    throw new Error('ITSM 세션 없음');
+  }
 
-        // 재연결 후 재시도
-        return _reconnecting.then(() => {
-          return new Promise(r => setTimeout(r, 500)).then(() => itsmFetch(path, true));
-        });
-      }
+  const gck = window._gck;
+  console.log('[CSM] g_ck 사용:', gck.slice(0, 8) + '...');
 
-      throw e;
+  // PATCH 요청 처리
+  const patchIdx = path.indexOf('__PATCH__');
+  if (patchIdx >= 0) {
+    const apiPath = path.slice(0, patchIdx);
+    const bodyStr = path.slice(patchIdx + 9);
+    const response = await fetch(ITSM_BASE + apiPath, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'X-UserToken': gck
+      },
+      body: bodyStr
     });
+
+    if (response.status === 401) {
+      window._gck = null;
+      window._gckExpiry = 0;
+      if (!_retried && typeof window.retriggerSso === 'function') {
+        console.log('[CSM] 401 - SSO 재연결');
+        await new Promise((resolve) => {
+          window.retriggerSso((success) => resolve(success));
+        });
+        await new Promise(r => setTimeout(r, 500));
+        return itsmFetch(path, true);
+      }
+      throw new Error('ITSM 인증 실패');
+    }
+
+    if (!response.ok) {
+      throw new Error(`ITSM PATCH ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data;
+  }
+
+  // GET 요청
+  const response = await fetch(ITSM_BASE + path, {
+    credentials: 'include',
+    headers: {
+      'Accept': 'application/json',
+      'X-UserToken': gck
+    }
+  });
+
+  console.log('[CSM] ITSM 응답:', response.status, response.url.slice(0, 80));
+
+  if (response.status === 401) {
+    window._gck = null;
+    window._gckExpiry = 0;
+    if (!_retried && typeof window.retriggerSso === 'function') {
+      console.log('[CSM] 401 - SSO 재연결');
+      await new Promise((resolve) => {
+        window.retriggerSso((success) => resolve(success));
+      });
+      await new Promise(r => setTimeout(r, 500));
+      return itsmFetch(path, true);
+    }
+    throw new Error('ITSM 인증 실패');
+  }
+
+  if (!response.ok) {
+    throw new Error(`ITSM ${response.status}`);
+  }
+
+  const data = await response.json();
+  return data;
 }
 
 // ── 내 계정 정보 ─────────────────────────────────────────────────────
@@ -1903,7 +1882,7 @@ async function loadCaseDetail(c) {
         journal: journal,
         updatedAt: new Date().toISOString()
       };
-      await browserAPI.storage.local.set({ lastState: state });
+      try { await browserAPI.storage.local.set({ lastState: state }); } catch(e) { console.warn("[CSM] Storage quota exceeded:", e); }
     }
 
     // 담당자 이메일 조회 (복사 버튼용)

@@ -6,21 +6,28 @@
   let _ssoInProgress = false;
   let _reconnectCallback = null;
 
+  // g_ck를 전역으로 저장 (background.js 없이 직접 사용)
+  window._gck = null;
+  window._gckExpiry = 0;
+
   // 전역 함수로 재연결 요청 노출
   window.retriggerSso = function(callback) {
     console.log('[init] 🔄 SSO 재연결 요청');
     _reconnectCallback = callback;
     _ssoInProgress = true;
 
-    // iframe을 완전히 다시 로드하여 SSO 재실행
+    // iframe을 직접 reload
     const iframe = document.getElementById('sso-iframe');
     if (iframe) {
-      const originalSrc = iframe.src;
-      iframe.src = 'about:blank'; // 먼저 비우고
-      setTimeout(() => {
-        iframe.src = originalSrc; // 다시 로드
-        console.log('[init] iframe 재로드 완료');
-      }, 100);
+      console.log('[init] iframe.contentWindow.location.reload()');
+      try {
+        iframe.contentWindow.location.reload();
+      } catch (e) {
+        console.log('[init] reload 실패, src 재설정:', e.message);
+        const originalSrc = iframe.src;
+        iframe.src = originalSrc + '?t=' + Date.now();
+      }
+      console.log('[init] iframe 재로드 완료');
     } else {
       console.error('[init] ❌ sso-iframe을 찾을 수 없음');
       _ssoInProgress = false;
@@ -38,27 +45,17 @@
       console.log('[init] ✅ SSO 성공 - g_ck 획득:', event.data.gck.slice(0, 8) + '...');
       _ssoInProgress = false;
 
-      // g_ck를 background에 저장
-      browserAPI.runtime.sendMessage({
-        type: 'SET_GCK',
-        gck: event.data.gck
-      }).then(() => {
-        console.log('[init] g_ck를 background에 전달 완료 - API 호출 준비됨');
+      // g_ck를 전역 변수에 저장 (background.js 없음)
+      window._gck = event.data.gck;
+      window._gckExpiry = Date.now() + 15 * 60 * 1000;
+      console.log('[init] g_ck 저장 완료 - API 호출 준비됨');
 
-        // 재연결 콜백이 있으면 실행
-        if (_reconnectCallback) {
-          const cb = _reconnectCallback;
-          _reconnectCallback = null;
-          cb(true);
-        }
-      }).catch(e => {
-        console.error('[init] g_ck 전달 실패:', e);
-        if (_reconnectCallback) {
-          const cb = _reconnectCallback;
-          _reconnectCallback = null;
-          cb(false);
-        }
-      });
+      // 재연결 콜백이 있으면 실행
+      if (_reconnectCallback) {
+        const cb = _reconnectCallback;
+        _reconnectCallback = null;
+        cb(true);
+      }
 
     } else if (event.data.type === 'SSO_FAILED') {
       console.error('[init] ❌ SSO 실패:', event.data.error);

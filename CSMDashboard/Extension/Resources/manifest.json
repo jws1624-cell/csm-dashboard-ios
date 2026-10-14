@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "CSM Case Dashboard",
-  "version": "2.0.0",
+  "version": "2.1.1",
   "description": "SAP CSM Team — ITSM Case Dashboard with AI Insight",
 
   "permissions": [
@@ -12,10 +12,6 @@
     "https://*.hana.ondemand.com/*"
   ],
 
-  "background": {
-    "scripts": ["background.js"],
-    "persistent": false
-  },
 
   "browser_action": {
     "default_title": "CSM Case Dashboard",
@@ -34,6 +30,8 @@
   },
 
   "web_accessible_resources": [
-    "korea-accounts.json"
+    "korea-accounts.json",
+    "sso-iframe.html",
+    "sso-bootstrap.js"
   ]
 }
