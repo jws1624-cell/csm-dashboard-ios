@@ -1,15 +1,16 @@
 {
   "manifest_version": 2,
   "name": "CSM Case Dashboard",
-  "version": "2.3.1",
-  "description": "SAP CSM Team — ITSM Case Dashboard with AI Insight",
+  "version": "2.4.0",
+  "description": "SAP CSM Team — ITSM + ONE360 Dashboard with AI Insight",
 
   "permissions": [
     "tabs",
     "cookies",
     "storage",
     "https://itsm.services.sap/*",
-    "https://*.hana.ondemand.com/*"
+    "https://*.hana.ondemand.com/*",
+    "https://one360.for.sap/*"
   ],
 
 

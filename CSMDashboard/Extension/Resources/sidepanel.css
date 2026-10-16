@@ -1054,3 +1054,228 @@ select {
 .notif-del:hover {
   color: var(--error);
 }
+
+/* ══════════════════════════════════════════════════════════════ */
+/* ── ONE360 탭 (account-detail + one360-*) — Chrome 원본에서 포팅 ── */
+/* ══════════════════════════════════════════════════════════════ */
+
+.account-detail-tabs {
+  display: flex; gap: 0; border-bottom: 2px solid var(--border);
+  margin-bottom: 12px; overflow-x: auto;
+}
+.account-detail-tab {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 12px; background: transparent; border: none;
+  border-bottom: 2px solid transparent; margin-bottom: -2px;
+  cursor: pointer; font-size: 12px; font-weight: 500;
+  color: var(--text-secondary, #556b82); transition: all 0.2s ease;
+  white-space: nowrap; flex-shrink: 0;
+}
+.account-detail-tab svg {
+  opacity: 0.6; transition: opacity 0.2s ease;
+}
+.account-detail-tab:hover {
+  color: var(--text); background: var(--hover-bg, rgba(0,0,0,0.03));
+}
+.account-detail-tab:hover svg {
+  opacity: 0.85;
+}
+.account-detail-tab.active {
+  color: var(--brand); border-bottom-color: var(--brand);
+  font-weight: 600;
+}
+.account-detail-tab.active svg {
+  opacity: 1;
+}
+.account-detail-panel {
+  animation: fadeIn 0.2s ease;
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.overview-section {
+  margin-bottom: 16px; padding: 12px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.overview-section-header {
+  font-size: 13px; font-weight: 600; color: var(--text);
+  margin-bottom: 10px; padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.overview-section-body {
+  font-size: 12px; color: var(--text-secondary, #556b82); line-height: 1.6;
+}
+
+/* ── 유틸 ────────────────────────────────────────────────────────── */
+.hidden { display: none !important; }
+
+.one360-back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  margin-bottom: 12px;
+  background: var(--btn-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+}
+
+.one360-back-btn:hover {
+  background: var(--btn-hover);
+  border-color: var(--brand);
+}
+
+.one360-panel-heading {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--brand);
+  margin-bottom: 16px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid var(--brand);
+}
+
+.one360-panel-subtitle {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.one360-section {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 12px;
+  transition: box-shadow 0.2s, border-color 0.2s;
+}
+
+.one360-section-clickable {
+  cursor: pointer;
+}
+
+.one360-section-clickable:hover {
+  box-shadow: 0 2px 8px rgba(0, 120, 212, 0.15);
+  border-color: var(--brand);
+}
+
+.one360-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.one360-section-subtitle {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.one360-kv-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.one360-kv-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 6px 8px;
+  background: var(--badge-bg);
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.one360-kv-label {
+  color: var(--text-secondary, #556b82);
+  font-weight: 500;
+}
+
+.one360-kv-value {
+  color: var(--text-primary);
+  font-weight: 600;
+  text-align: right;
+}
+
+.one360-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 12px;
+  font-size: 12px;
+}
+
+.one360-table thead {
+  background: var(--badge-bg);
+}
+
+.one360-table th {
+  padding: 8px;
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-secondary, #556b82);
+  border-bottom: 2px solid var(--border);
+}
+
+.one360-table td {
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+}
+
+.one360-table tbody tr:hover {
+  background: var(--badge-bg);
+}
+
+.one360-chart-wrapper {
+  position: relative;
+  height: 240px;
+  margin-top: 12px;
+  padding: 8px;
+  background: var(--card-bg);
+  border-radius: 4px;
+}
+
+.one360-chart-wrapper canvas {
+  max-height: 220px;
+}
+
+.one360-text-block {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 8px;
+  padding: 8px;
+  background: var(--badge-bg);
+  border-radius: 4px;
+}
+
+.one360-spinner-block {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.one360-spinner-block .spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--brand);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}

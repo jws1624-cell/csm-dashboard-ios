@@ -510,6 +510,15 @@ let myUserId = null;       // ITSM 로그인 사용자 sys_id
 let myUserName = null;     // 표시용
 let myEmail = null;        // watch_list 등록용
 let _lastTargets = null;    // 마지막 조회 타겟([{crmId,name}]) — status 필터 변경 시 재조회용
+// ── ONE360 고객사 상세 상태 (Chrome 원본에서 포팅) ──
+let _selectedAccount = null;   // 선택된 단일 고객사 {crmId, name}. 복수 조회 시 null → 상세 탭 숨김
+let _accountDetailTab = 'cases'; // 'contract' | 'cacv' | 'consumption' | 'cases'
+// ONE360 raw 캐시 — 고객 선택 시 BDC+BTP 전체를 1회만 받아두고,
+// SA 필터(BDC/BTP/Other) 변경은 서버 재조회 없이 클라이언트 필터링으로 처리.
+// 구조: { rows, accountId, (guId,) crmId } / 로드 안 됐으면 null
+let _contractAll = null;
+let _cacvAll = null;
+let _consumptionAll = null;
 let _rawCases = [];         // 컴포넌트 필터 적용 전 원본 케이스 — comp 필터 변경 시 클라 재필터용
 let _lastQuery = null;      // 마지막 검색 쿼리 — 재시도용
 let _lastAiInsight = null;  // 마지막 AI 구조화 결과(전체 복사용)
@@ -1316,13 +1325,47 @@ async function renderCaseList(cases) {
 
 // ── 뷰 전환 ──────────────────────────────────────────────────────────
 let _currentView = 'account'; // 'account' | 'cases' | 'loading' | 'empty' | 'error'
+// 활성 탭(_accountDetailTab) 기준으로 ONE360 탭 패널과 caseList를 상호배타 토글.
+// 고객 미선택 시엔 전부 숨긴다. showView와 탭 클릭 핸들러가 공유한다.
+function applyDetailTabVisibility() {
+  const hasAccount = !!_selectedAccount;
+  const tab = _accountDetailTab;
+  const set = (id, show) => { const el = document.getElementById(id); if (el) el.classList.toggle('hidden', !show); };
+  set('contractTab', hasAccount && tab === 'contract');
+  set('cacvTab', hasAccount && tab === 'cacv');
+  set('consumptionTab', hasAccount && tab === 'consumption');
+  // caseList는 고객 선택 + Cases 탭일 때만. account/loading/empty/error 뷰에선
+  // showView가 caseList를 직접 숨기므로 여기선 cases 탭 조건만 본다.
+  const inListMode = _currentView === 'account' || _currentView === 'loading' || _currentView === 'empty' || _currentView === 'error';
+  set('caseList', hasAccount && tab === 'cases' && !inListMode);
+
+  // ONE360 탭에선 "케이스가 없습니다" emptyState를 강제로 숨긴다.
+  if (hasAccount && tab !== 'cases') set('emptyState', false);
+
+  // 탭 버튼 active 상태 동기화
+  document.querySelectorAll('.account-detail-tab').forEach(t => {
+    t.classList.toggle('active', t.dataset.tab === tab);
+  });
+}
+
 function showView(mode) {
   _currentView = mode;
   document.getElementById('accountList').classList.toggle('hidden', mode !== 'account');
   document.getElementById('skeletonList').classList.toggle('hidden', mode !== 'loading');
-  document.getElementById('caseList').classList.toggle('hidden', mode !== 'cases');
   document.getElementById('emptyState').classList.toggle('hidden', mode !== 'empty');
   document.getElementById('errorState').classList.toggle('hidden', mode !== 'error');
+
+  // 고객사 상세 (Contract/cACV/Consumption/Cases 탭)
+  const detailContainer = document.getElementById('accountDetailContainer');
+  if (detailContainer) {
+    detailContainer.classList.toggle('hidden', !_selectedAccount);
+  }
+
+  // caseList는 accountDetailContainer 바깥 형제이므로, 활성 탭 기준으로
+  // ONE360 탭과 상호배타 토글(모든 탭 하단에 case 섞임 방지).
+  if (mode === 'cases') _accountDetailTab = 'cases';
+  applyDetailTabVisibility();
+
   // 헤더 ← 버튼: 고객사 목록이 아닐 때 표시, 로고는 반대로
   const isAccount = mode === 'account';
   document.getElementById('btnBackMain').classList.toggle('hidden', isAccount);
@@ -1620,6 +1663,21 @@ async function doSearch(crmIds, overrideAccountName) {
 
   _lastTargets = finalTargets;
 
+  // ONE360 고객사 컨텍스트: 단일 고객사면 상세 탭(Contract/cACV/Consumption) 활성화,
+  // 복수 고객사면 null로 두어 상세 탭을 숨긴다(Chrome 원본과 동일).
+  // 선택된 고객사가 바뀌면 ONE360 캐시 무효화.
+  if (finalTargets.length === 1) {
+    const prevCrm = _selectedAccount && _selectedAccount.crmId;
+    _selectedAccount = { crmId: finalTargets[0].crmId, name: finalTargets[0].name };
+    if (prevCrm !== _selectedAccount.crmId) {
+      _contractAll = _cacvAll = _consumptionAll = null;
+    }
+  } else {
+    _selectedAccount = null;
+    _contractAll = _cacvAll = _consumptionAll = null;
+  }
+  _accountDetailTab = 'cases';
+
   setProgress(`${t('itsmFetching')} (${finalTargets.map(t => t.name).join(', ')})`);
   try {
     const results = await Promise.all(
@@ -1693,11 +1751,20 @@ async function applyComponentFilter() {
   const stateCodes = [...document.querySelectorAll('.status-chk:checked')].map(c => c.value);
   const stateLabels = stateCodes.map(c => STATE_TEXT[c]).filter(Boolean);
   const compKeys = [...document.querySelectorAll('.comp-chk:checked')].map(c => c.value);
-  const allComps = compKeys.includes('ALL');
-  const prefixes = allComps ? null : compKeys.flatMap(k => COMPONENTS[k] || []);
+  // BDC/BTP/Other 3버킷. BDC/BTP는 prefix 매칭, Other는 BDC/BTP prefix의 여집합.
+  const want = { bdc: compKeys.includes('BDC'), btp: compKeys.includes('BTP'), other: compKeys.includes('OTHER') };
+  const allComps = compKeys.length === 0 || (want.bdc && want.btp && want.other);
   let filtered = _rawCases;
   if (stateLabels.length) filtered = filtered.filter(c => stateLabels.includes(c.state));
-  if (prefixes?.length) filtered = filtered.filter(c => prefixes.some(p => c.u_app_component.startsWith(p)));
+  if (!allComps) {
+    filtered = filtered.filter(c => {
+      const comp = c.u_app_component || '';
+      const isBdc = COMPONENTS.BDC.some(p => comp.startsWith(p));
+      const isBtp = COMPONENTS.BTP.some(p => comp.startsWith(p));
+      const isOther = !isBdc && !isBtp;
+      return (want.bdc && isBdc) || (want.btp && isBtp) || (want.other && isOther);
+    });
+  }
   currentCases = filtered;
   if (!document.getElementById('resultCount').textContent.startsWith('⚠️')) {
     document.getElementById('resultCount').textContent = `${filtered.length}건`;
@@ -3163,22 +3230,41 @@ async function init() {
     }
   });
 
-  // component 필터 변경 → 클라이언트 재필터 (서버 재조회 없음)
+  // component 필터 변경 → 클라이언트 재필터 (서버 재조회 없음) + ONE360 탭 재로드
   document.querySelectorAll('.comp-chk').forEach(chk => {
     chk.addEventListener('change', () => {
-      if (chk.value === 'ALL' && chk.checked) {
-        // All 선택 시 BDC/BTP 해제
-        document.querySelectorAll('.comp-chk').forEach(c => { if (c.value !== 'ALL') c.checked = false; });
-      } else if (chk.value !== 'ALL' && chk.checked) {
-        document.querySelector('.comp-chk[value="ALL"]').checked = false;
+      // BDC/BTP/Other 3개 독립 토글. 상호배제 없음(전부 체크=전체).
+      // Cases 탭에서만 case 재필터. ONE360 탭에선 캐시 기반 클라 재렌더만
+      // (renderCaseList→showView('cases')가 탭을 바꾸므로 cases 탭 점프 방지).
+      if (_accountDetailTab === 'cases') {
+        if (_rawCases.length) applyComponentFilter();
+      } else if (_selectedAccount) {
+        if (_accountDetailTab === 'contract' && _contractAll) renderContract();
+        else if (_accountDetailTab === 'cacv' && _cacvAll) renderCACV();
+        else if (_accountDetailTab === 'consumption' && _consumptionAll) renderConsumption();
       }
-      if (_rawCases.length) applyComponentFilter();
+    });
+  });
+
+  // 고객사 상세 탭(Contract/cACV/Consumption/Cases) 전환
+  document.querySelectorAll('.account-detail-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      if (!_selectedAccount) return;
+      _accountDetailTab = tab.dataset.tab;
+      applyDetailTabVisibility();
+      if (_accountDetailTab === 'contract') loadContract();
+      else if (_accountDetailTab === 'cacv') loadCACV();
+      else if (_accountDetailTab === 'consumption') loadConsumption();
+      else if (_accountDetailTab === 'cases') { if (currentCases.length) renderCaseList(currentCases); }
     });
   });
 
   document.getElementById('btnBackMain').onclick = () => {
     currentCases = [];
     document.getElementById('resultCount').textContent = '';
+    _selectedAccount = null;              // 고객사 컨텍스트 초기화
+    _accountDetailTab = 'cases';
+    _contractAll = _cacvAll = _consumptionAll = null; // ONE360 캐시 무효화
     if (selectedOwnerKey === 'favourite') {
       renderFavouriteList();
       return;
@@ -3445,6 +3531,11 @@ function renderOwnerTabs() {
       selectedOwnerKey = o.key;
       currentCases = [];
       document.getElementById('resultCount').textContent = '';
+      // 고객사 상세 컨텍스트 초기화 — 진행 중이던 ONE360 로드 결과가 리스트에
+      // 섞여 렌더되는 것 방지(btnBackMain과 동일). 로드 함수의 stale 가드와 병행.
+      _selectedAccount = null;
+      _accountDetailTab = 'cases';
+      _contractAll = _cacvAll = _consumptionAll = null;
       await renderAccountList(o.ids);
     });
     scrollEl.appendChild(btn);
@@ -3458,6 +3549,10 @@ function renderOwnerTabs() {
       selectedOwnerKey = tab.dataset.key;
       currentCases = [];
       document.getElementById('resultCount').textContent = '';
+      // 고객사 상세 컨텍스트 초기화(위 담당자 탭과 동일 이유).
+      _selectedAccount = null;
+      _accountDetailTab = 'cases';
+      _contractAll = _cacvAll = _consumptionAll = null;
       if (selectedOwnerKey === 'notifications') {
         await renderNotifications();
       } else if (selectedOwnerKey === 'favourite') {
@@ -4184,6 +4279,1094 @@ function formatTimeAgo(isoString) {
 document.getElementById('btnRefresh').addEventListener('click', () => {
   checkUpdatesBackground();
 });
+
+
+// ══════════════════════════════════════════════════════════════════════════
+// ── ONE360 탭 (Contract / cACV / Consumption) — Chrome 원본에서 포팅 ──────
+//    데이터 조회는 background.js의 ONE360 핸들러(직접 fetch) 경유.
+//    chrome.* → browserAPI.* 치환됨. 렌더 서브시스템(_viewStack)을 먼저 선언.
+// ══════════════════════════════════════════════════════════════════════════
+
+// ── ONE360 Drilldown (Obsidian Sidebar Pattern) ──────────────────────────
+// ══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Navigation stack for drilldown UI.
+ * stack[0] = root panel (SA cards)
+ * stack[1+] = drilled panels (metric details, charts)
+ */
+const _viewStack = [];
+
+// ══════════════════════════════════════════════════════════════════════════
+// ── ONE360 직접 fetch 인프라 (ITSM itsmFetch와 동일: popup 컨텍스트 직접 fetch) ──
+//    iOS Safari는 background hidden 탭/service worker가 없으므로 ITSM처럼
+//    popup에서 직접 fetch(credentials:'include')로 one360.for.sap 쿠키를 쓴다.
+//    세션 없음(401/403) 시 ITSM retriggerSso와 동일하게 현재 탭을 one360으로
+//    리다이렉트해 SAP SSO 쿠키를 세팅한 뒤 재시도한다.
+// ══════════════════════════════════════════════════════════════════════════
+const ONE360_HOST = 'one360.for.sap';
+const ONE360_APP_ID = 'a65523c8-ea3d-4cfb-ada1-7aa8c137998b';
+
+// one360.for.sap 세션 확보: 현재 Safari 탭을 one360으로 리다이렉트.
+// 탭을 one360으로 보내 SAP SSO 쿠키를 세팅시킨다(대기/판정은 호출부 폴링이 담당 — 고정 시간 대기 안 함).
+// popup은 활성 탭과 별개 WebView라 리다이렉트해도 이 JS 컨텍스트는 살아있다.
+async function redirectToOne360() {
+  try {
+    const tabs = await browserAPI.tabs.query({ active: true, currentWindow: true });
+    if (tabs.length > 0) {
+      console.log('[CSM] 🔄 ONE360 세션 확보 - Safari를 one360.for.sap으로 리다이렉트');
+      await browserAPI.tabs.update(tabs[0].id, { url: 'https://one360.for.sap/' });
+      return true;
+    }
+  } catch (e) {
+    console.error('[CSM] ONE360 탭 리다이렉트 실패:', e);
+  }
+  return false;
+}
+
+// ONE360 API 필터 블록 생성 (background 원본과 동일)
+function one360FilterBlock(values) {
+  return [{
+    connectionOperator: 'AND', operator: 'AND',
+    properties: { immutable: false, showInFrontend: true },
+    values: values.map((v, i) => ({
+      column: v.column, operator: v.operator || 'IN', values: v.values,
+      isFilledFromContext: true, filterBlockId: 'runtimeFilterBlock',
+      isDatablockFilter: false, connectionOperator: 'AND',
+      isNucleusFilter: true, nucleusFilterId: `nucleus_id_${i}`,
+    })),
+    filterBlockId: 'runtimeFilterBlock', isFilledFromContext: false,
+  }];
+}
+
+// ONE360 API 파라미터 생성 (background 원본과 동일)
+function one360Params(extras = []) {
+  return [
+    { parameter: 'RESPONSIBILITY_SCENARIO', values: ['381'], isNucleusParameterValue: true, nucleusParameterId: 'p_rs' },
+    { parameter: 'IN_CURRENCY', values: ['EUR'], isNucleusParameterValue: true, nucleusParameterId: 'p_cur' },
+    ...extras,
+  ];
+}
+
+// SA 키 → 컴포넌트 버킷('BDC'|'BTP'|'OTHER'). 응답 row에 _saBucket 태깅용.
+function saBucketOf(saKey) {
+  const s = String(saKey || '').toUpperCase();
+  if (s.startsWith('SADA') || s.includes('DATA & AI') || s.includes('DATA AND AI') || s.includes('BAIP')) return 'BDC';
+  if (s.startsWith('SABTP') || s.includes('BUSINESS TECHNOLOGY') || /\bBTP\b/.test(s)) return 'BTP';
+  return 'OTHER';
+}
+
+// ONE360 세션 확보 polling: 로그인 소요 시간이 가변적이므로 고정 대기 대신
+// "유효성(fetch 성공)"을 1초마다 확인한다. 시간은 timeout 상한으로만 쓴다.
+const ONE360_SESSION_TIMEOUT_MS = 90000; // 로그인(MFA 포함)이 오래 걸려도 견디는 상한
+let _one360Redirected = false;           // 리다이렉트는 세션 미확보 상태당 1회만
+
+// datablock fetch 1회. 상태코드/rows를 그대로 돌려줌(판정은 상위 one360Fetch).
+async function one360FetchOnce(dbId, payload, host, version) {
+  const url = `https://${host}/api/datablocks/v1/apps/${ONE360_APP_ID}/datablocks/${dbId}/fetch-data?version=${version}`;
+  const r = await fetch(url, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return r;
+}
+
+// ONE360 datablock fetch (popup 직접 호출). 세션 없음(401/403)이면 one360으로 탭을
+// 리다이렉트해 로그인시키고, 쿠키가 생겨 fetch가 성공할 때까지 1초 간격으로 폴링한다.
+// ONE360엔 g_ck 같은 토큰이 없으므로 "세션 유효" 판정 = fetch가 200을 받는 것.
+// 반환: rows 배열. timeout까지 실패하면 throw.
+async function one360Fetch(dbId, payload, host = ONE360_HOST, version = '453') {
+  let r;
+  try {
+    r = await one360FetchOnce(dbId, payload, host, version);
+  } catch (e) {
+    throw new Error(`ONE360 네트워크 오류: ${e.message}`);
+  }
+
+  if (r.status === 401 || r.status === 403) {
+    // 세션 없음 → 탭을 one360으로 1회 리다이렉트(로그인 유도) 후, 유효성 폴링.
+    if (!_one360Redirected) {
+      _one360Redirected = true;
+      await redirectToOne360();
+    }
+    console.log('[CSM] 🔄 ONE360 세션 대기 - 로그인 완료까지 1초 간격 폴링');
+    const deadline = Date.now() + ONE360_SESSION_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      await new Promise(res => setTimeout(res, 1000));
+      let rr;
+      try {
+        rr = await one360FetchOnce(dbId, payload, host, version);
+      } catch (_) {
+        continue; // 네트워크 흔들림 → 다음 틱 재시도
+      }
+      if (rr.status === 401 || rr.status === 403) continue; // 아직 로그인 전
+      if (!rr.ok) {
+        const txt = await rr.text().catch(() => '');
+        throw new Error(`ONE360 ${rr.status}: ${txt.slice(0, 200)}`);
+      }
+      _one360Redirected = false; // 세션 확보됨 → 다음 세션 만료 때 다시 리다이렉트 허용
+      const data = await rr.json();
+      return data?.rows || [];
+    }
+    throw new Error('ONE360 세션 확보 실패 — Safari에서 one360.for.sap 로그인 상태를 확인하세요.');
+  }
+
+  if (!r.ok) {
+    const txt = await r.text().catch(() => '');
+    throw new Error(`ONE360 ${r.status}: ${txt.slice(0, 200)}`);
+  }
+  _one360Redirected = false;
+  const data = await r.json();
+  return data?.rows || [];
+}
+
+// ── ONE360 조회 래퍼 (background 핸들러 로직을 popup으로 이식. 반환 형태 {ok,...} 유지) ──
+async function one360GetAccount(crmId) {
+  const paddedId = String(crmId).replace(/^0+/, '').padStart(10, '0');
+  const payload = {
+    columns: ['SAPViewTopParent', 'CRMAccountName_title', 'CRMAccountID'],
+    filters: one360FilterBlock([{ column: 'CRMAccountID', values: [paddedId] }]),
+    sortSteps: [], parameterValues: one360Params(), offset: 0, limit: 1,
+  };
+  const rows = await one360Fetch('cc604004-e0ba-427c-828f-4898564b2987', payload);
+  if (!rows.length) throw new Error(`CRM ${crmId} not found (padded: ${paddedId})`);
+  const v = rows[0].values;
+  return { ok: true, account: { accountId: v.CRMAccountID, customerName: v.CRMAccountName_title, guAccountId: v.SAPViewTopParent } };
+}
+
+async function one360GetContract(accountId) {
+  const payload = {
+    columns: ['Account_ID', 'InitialOrder', 'Order', 'SalesDocumentType', 'Item_Past_Current_Future',
+              'Status', 'Contract_Start_Date_Item_', 'Contract_End_Date_Item_', 'MaterialID',
+              'Quantity', 'Sales_Doc_Type_value', 'Renewal_Type',
+              'Active_ACV_Restricted', 'TCV_Restricted', 'Sub_Solution_Area', 'Solution_Area_ID'],
+    filters: one360FilterBlock([
+      { column: 'Account_ID', values: [accountId] },
+      { column: 'Item_Past_Current_Future', values: ['Current', 'Future'] },
+    ]),
+    sortSteps: [
+      { column: 'InitialOrder', direction: 'ASC', alwaysApply: true, properties: {}, isDatablockSortStep: false },
+      { column: 'Order', direction: 'ASC', alwaysApply: true, properties: {}, isDatablockSortStep: false },
+      { column: 'Contract_Start_Date_Item_', direction: 'ASC', alwaysApply: true, properties: {}, isDatablockSortStep: false },
+    ],
+    parameterValues: one360Params(), offset: 0, limit: 500,
+  };
+  const rows = await one360Fetch('b00b40d0-317e-429b-8047-c590c7be7285', payload);
+  (rows || []).forEach(r => { r._saBucket = saBucketOf((r.values || r).Solution_Area_ID || ''); });
+  return { ok: true, rows: rows || [] };
+}
+
+async function one360GetConsumption(accountId, guId) {
+  const payload = {
+    columns: ['Account_ID', 'Solution_Area', 'Solution_Area_ID', 'MetricID', 'MetricText',
+              '_Used_1CSW', '_Licensed', '_ActualMeasured', 'Metric_Status_Text', 'Unlimited_Entitlement_Flag'],
+    filters: one360FilterBlock([
+      { column: 'Account_ID', values: [accountId] },
+      { column: 'GU_Account', values: [guId] },
+      { column: 'Current_Record', values: ['X'] },
+      { column: 'Current_Record_Valid', values: ['Yes'] },
+    ]),
+    sortSteps: [{ column: 'MetricID', direction: 'ASC', alwaysApply: true, properties: {}, isDatablockSortStep: false }],
+    parameterValues: [{ parameter: 'RESPONSIBILITY_SCENARIO', values: ['381'], isNucleusParameterValue: true, nucleusParameterId: 'p_rs' }],
+    offset: 0, limit: 500,
+  };
+  const rows = await one360Fetch('3d52861e-19c1-4812-b474-263af39b8385', payload);
+  (rows || []).forEach(r => {
+    const saId = (r.values || r).Solution_Area_ID || '';
+    r._saBucket = saBucketOf(saId); r._saId = saId;
+  });
+  return { ok: true, rows: rows || [] };
+}
+
+async function one360GetConsumptionTrend(accountId, saId, metricId) {
+  const filterCols = [
+    { column: 'Account_ID', values: [accountId] },
+    { column: 'Solution_Area_ID', values: [saId] },
+  ];
+  if (metricId) filterCols.push({ column: 'MetricID', values: [metricId] });
+  const payload = {
+    columns: ['No_Utilized_Max_', 'No_Entitled_Max_', 'CalendarMonthYYYYMM', 'MetricID'],
+    filters: one360FilterBlock(filterCols),
+    sortSteps: [{ column: 'CalendarMonthYYYYMM', direction: 'ASC', alwaysApply: true, properties: {}, isDatablockSortStep: false }],
+    parameterValues: [{ parameter: 'RESPONSIBILITY_SCENARIO', values: ['381'], isNucleusParameterValue: true, nucleusParameterId: 'p_rs' }],
+    offset: 0, limit: 500,
+  };
+  const rows = await one360Fetch('3d52861e-19c1-4812-b474-263af39b8385', payload, ONE360_HOST, '456');
+  return { ok: true, rows };
+}
+
+async function one360GetCACV(accountId, saFilter, year) {
+  const filterConditions = [{ column: 'Account_ID', values: [accountId] }];
+  if (saFilter.length > 0 && !(saFilter.includes('BDC') && saFilter.includes('BTP'))) {
+    saFilter.forEach(sa => {
+      const saKey = sa === 'BDC' ? `SADA.${year}` : (sa === 'BTP' ? `SABTP.${year}` : sa);
+      filterConditions.push({ column: 'Solution_Area_ID', operator: 'IN', values: [saKey] });
+    });
+  }
+  const payload = {
+    columns: ['Month', 'Logical_Product_ID', 'Solution_Area_ID', 'Monthly_CACV_EUR_Budget_Current_Year_Financial_Restricted'],
+    filters: one360FilterBlock(filterConditions),
+    sortSteps: [{ column: 'Month', direction: 'DESC', alwaysApply: true, properties: {}, isDatablockSortStep: false }],
+    parameterValues: [{ parameter: 'RESPONSIBILITY_SCENARIO', values: ['381'], isNucleusParameterValue: true, nucleusParameterId: 'p_rs' }],
+    offset: 0, limit: 500,
+  };
+  const rows = await one360Fetch('e83fabf4-5ce6-4de4-856c-fadc14f5d1be', payload, ONE360_HOST, 'latest');
+  (rows || []).forEach(r => { r._saBucket = saBucketOf((r.values || r).Solution_Area_ID || ''); });
+  return { ok: true, rows };
+}
+
+/**
+ * Panel structure (Obsidian pattern)
+ * @typedef {Object} Panel
+ * @property {string} heading - Panel title
+ * @property {string} [subtitle] - Optional subtitle
+ * @property {Section[]} sections - Content sections
+ */
+
+/**
+ * Section structure (clickable card or detail view)
+ * @typedef {Object} Section
+ * @property {string} title - Section title
+ * @property {string} [subtitle] - Optional subtitle
+ * @property {Block[]} blocks - Content blocks
+ * @property {Panel} [detail] - Drilldown target (makes section clickable)
+ * @property {string} [sa] - Solution Area (for filtering)
+ * @property {string} [group] - Category group (contract/cacv/consumption)
+ */
+
+/**
+ * Block types (content primitives)
+ * @typedef {Object} Block
+ * @property {'kv'|'table'|'chart'|'text'|'spinner'} kind
+ * @property {Array} [rows] - For kv/table
+ * @property {Array} [columns] - For table
+ * @property {string} [text] - For text/spinner
+ * @property {Array} [labels] - For chart (x-axis)
+ * @property {Array} [series] - For chart (datasets)
+ * @property {'bar'|'line'} [mode] - Chart type
+ * @property {'eur'|'int'} [valueFmt] - Value formatter
+ */
+
+/**
+ * Navigate to a panel (push onto stack)
+ */
+function navigateTo(panel) {
+  // 드릴다운 패널은 부모와 같은 탭 컨테이너에 그려야 한다.
+  // 부모(현재 top)의 containerGroup을 상속시켜 renderCurrentPanel이 컨테이너를 찾도록 한다.
+  const parent = _viewStack[_viewStack.length - 1];
+  if (parent && !panel.containerGroup) {
+    panel.containerGroup = resolveContainerGroup(parent);
+  }
+  _viewStack.push(panel);
+  renderCurrentPanel();
+
+  // 지연 로드 훅: 드릴다운 진입 시 1회 실행(예: Consumption 월별 트렌드 조회).
+  // onEnter는 panel.sections를 채운 뒤 renderCurrentPanel()을 다시 부른다.
+  if (typeof panel.onEnter === 'function' && !panel._entered) {
+    panel._entered = true;
+    Promise.resolve(panel.onEnter(panel)).then(() => {
+      // 사용자가 그새 Back을 눌렀으면 재렌더하지 않는다.
+      if (_viewStack[_viewStack.length - 1] === panel) renderCurrentPanel();
+    }).catch(err => console.error('[navigateTo onEnter] 실패:', err));
+  }
+}
+
+/**
+ * 패널이 그려질 탭 컨테이너의 group 키를 결정한다.
+ * 우선순위: panel.containerGroup → 첫 섹션의 group.
+ */
+function resolveContainerGroup(panel) {
+  if (panel.containerGroup) return panel.containerGroup;
+  const firstSection = panel.sections && panel.sections[0];
+  return firstSection && firstSection.group;
+}
+
+/**
+ * Go back (pop from stack)
+ */
+function goBack() {
+  if (_viewStack.length > 1) {
+    _viewStack.pop();
+    renderCurrentPanel();
+  }
+}
+
+/**
+ * Render the current top panel
+ */
+function renderCurrentPanel() {
+  if (_viewStack.length === 0) {
+    console.warn('[renderCurrentPanel] viewStack 비어있음');
+    return;
+  }
+
+  const panel = _viewStack[_viewStack.length - 1];
+  const isRoot = _viewStack.length === 1;
+
+  // Determine container based on group (contract/cacv/consumption).
+  // 드릴다운 패널은 섹션에 group이 없을 수 있으므로 containerGroup(부모 상속)을 우선 사용한다.
+  let container;
+  const group = resolveContainerGroup(panel);
+  console.log('[renderCurrentPanel] group:', group, 'isRoot:', isRoot);
+
+  if (group === 'contract') {
+    container = document.querySelector('#contractTab .overview-section-body');
+  } else if (group === 'cacv') {
+    container = document.querySelector('#cacvTab .overview-section-body');
+  } else if (group === 'consumption') {
+    container = document.querySelector('#consumptionTab .overview-section-body');
+  }
+
+  console.log('[renderCurrentPanel] container:', container ? 'found' : 'NOT FOUND');
+  if (!container) return;
+
+  // Clear and rebuild
+  container.innerHTML = '';
+
+  // Back button (only for drilled panels)
+  if (!isRoot) {
+    const backBtn = document.createElement('button');
+    backBtn.className = 'one360-back-btn';
+    backBtn.innerHTML = '← Back';
+    backBtn.onclick = goBack;
+    container.appendChild(backBtn);
+  }
+
+  // Panel heading
+  if (panel.heading) {
+    const headingDiv = document.createElement('div');
+    headingDiv.className = 'one360-panel-heading';
+    headingDiv.textContent = panel.heading;
+    if (panel.subtitle) {
+      const subtitleSpan = document.createElement('div');
+      subtitleSpan.className = 'one360-panel-subtitle';
+      subtitleSpan.textContent = panel.subtitle;
+      headingDiv.appendChild(subtitleSpan);
+    }
+    container.appendChild(headingDiv);
+  }
+
+  // Render sections
+  console.log('[renderCurrentPanel] sections:', panel.sections.length, 'isRoot:', isRoot);
+  panel.sections.forEach((section, idx) => {
+    console.log(`[renderSection#${idx}] title:`, section.title, 'hasDetail:', !!section.detail);
+    const sectionEl = renderSection(section);
+    container.appendChild(sectionEl);
+  });
+}
+
+/**
+ * Render a single section
+ */
+function renderSection(section) {
+  const div = document.createElement('div');
+  div.className = 'one360-section';
+
+  // Make clickable if detail exists
+  if (section.detail) {
+    console.log('[renderSection] 드릴다운 클릭 이벤트 등록:', section.title);
+    div.classList.add('one360-section-clickable');
+    div.onclick = () => {
+      console.log('[navigateTo] 드릴다운:', section.title);
+      navigateTo(section.detail);
+    };
+  }
+
+  // Title row
+  const titleDiv = document.createElement('div');
+  titleDiv.className = 'one360-section-title';
+  titleDiv.textContent = section.title;
+  div.appendChild(titleDiv);
+
+  // Subtitle
+  if (section.subtitle) {
+    const subtitleDiv = document.createElement('div');
+    subtitleDiv.className = 'one360-section-subtitle';
+    subtitleDiv.textContent = section.subtitle;
+    div.appendChild(subtitleDiv);
+  }
+
+  // Blocks
+  if (section.blocks) {
+    section.blocks.forEach(block => {
+      const blockEl = renderBlock(block);
+      if (blockEl) div.appendChild(blockEl);
+    });
+  }
+
+  return div;
+}
+
+/**
+ * Render a single block
+ */
+function renderBlock(block) {
+  switch (block.kind) {
+    case 'kv': return renderKvBlock(block);
+    case 'table': return renderTableBlock(block);
+    case 'chart': return renderChartBlock(block);
+    case 'text': return renderTextBlock(block);
+    case 'spinner': return renderSpinnerBlock(block);
+    default: return null;
+  }
+}
+
+/**
+ * Render key-value pairs
+ */
+function renderKvBlock(block) {
+  const div = document.createElement('div');
+  div.className = 'one360-kv-block';
+
+  block.rows.forEach(row => {
+    const rowDiv = document.createElement('div');
+    rowDiv.className = 'one360-kv-row';
+
+    const labelSpan = document.createElement('span');
+    labelSpan.className = 'one360-kv-label';
+    labelSpan.textContent = row.label;
+
+    const valueSpan = document.createElement('span');
+    valueSpan.className = 'one360-kv-value';
+    valueSpan.textContent = row.value;
+    if (row.tone === 'warn') valueSpan.style.color = '#d32f2f';
+    if (row.tone === 'ok') valueSpan.style.color = '#388e3c';
+
+    rowDiv.appendChild(labelSpan);
+    rowDiv.appendChild(valueSpan);
+    div.appendChild(rowDiv);
+  });
+
+  return div;
+}
+
+/**
+ * Render table
+ */
+function renderTableBlock(block) {
+  const table = document.createElement('table');
+  table.className = 'one360-table';
+
+  // Header
+  const thead = document.createElement('thead');
+  const headerRow = document.createElement('tr');
+  block.columns.forEach(col => {
+    const th = document.createElement('th');
+    th.textContent = col;
+    headerRow.appendChild(th);
+  });
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
+
+  // Body
+  const tbody = document.createElement('tbody');
+  block.rows.forEach(row => {
+    const tr = document.createElement('tr');
+    row.forEach(cell => {
+      const td = document.createElement('td');
+      td.textContent = typeof cell === 'object' ? cell.value : cell;
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+
+  return table;
+}
+
+/**
+ * Render chart (Chart.js)
+ */
+function renderChartBlock(block) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'one360-chart-wrapper';
+
+  const canvas = document.createElement('canvas');
+  wrapper.appendChild(canvas);
+
+  // Format values
+  const formatValue = (val) => {
+    if (val == null) return null;
+    if (block.valueFmt === 'eur') return Number(val).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+    if (block.valueFmt === 'int') return Number(val).toLocaleString('en-US', { maximumFractionDigits: 0 });
+    return val;
+  };
+
+  // Chart.js config
+  const datasets = block.series.map(s => ({
+    label: s.label,
+    data: s.values,
+    backgroundColor: s.tone === 'ok' ? '#4caf50' : s.tone === 'warn' ? '#ff9800' : '#0078d4',
+    borderColor: s.tone === 'ok' ? '#388e3c' : s.tone === 'warn' ? '#f57c00' : '#005a9e',
+    borderWidth: 1,
+    tension: block.mode === 'line' ? 0.3 : 0
+  }));
+
+  const config = {
+    type: block.mode === 'line' ? 'line' : 'bar',
+    data: {
+      labels: block.labels,
+      datasets
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: datasets.length > 1 },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              let label = ctx.dataset.label || '';
+              if (label) label += ': ';
+              const formatted = formatValue(ctx.parsed.y);
+              label += block.valueFmt === 'eur' ? `€${formatted}` : formatted;
+              return label;
+            }
+          }
+        }
+      },
+      scales: block.showAxis ? {
+        y: {
+          beginAtZero: true,
+          ticks: {
+            callback: (val) => {
+              const formatted = formatValue(val);
+              return block.valueFmt === 'eur' ? `€${formatted}` : formatted;
+            }
+          }
+        }
+      } : false
+    }
+  };
+
+  // Render after next tick (canvas needs to be in DOM)
+  setTimeout(() => {
+    new Chart(canvas, config);
+  }, 0);
+
+  return wrapper;
+}
+
+/**
+ * Render text block
+ */
+function renderTextBlock(block) {
+  const div = document.createElement('div');
+  div.className = 'one360-text-block';
+  div.textContent = block.text;
+  return div;
+}
+
+/**
+ * Render spinner (loading indicator)
+ */
+function renderSpinnerBlock(block) {
+  const div = document.createElement('div');
+  div.className = 'one360-spinner-block';
+  div.innerHTML = `<div class="spinner"></div><span>${block.text || ''}</span>`;
+  return div;
+}
+
+
+// ── ONE360 탭 공통 헬퍼 ──────────────────────────────────────────────
+// 현재 체크된 컴포넌트 필터(BDC/BTP/OTHER)를 반환. 미선택이면 전체(안전 기본값).
+function selectedComponents() {
+  const checked = Array.from(document.querySelectorAll('.comp-chk:checked')).map(c => c.value);
+  if (checked.length === 0) return ['BDC', 'BTP', 'OTHER'];
+  return checked;
+}
+
+// 체크된 컴포넌트 → SA 매칭용 집합. BDC=Data&AI(SADA), BTP=BTP(SABTP), OTHER=그 외 전체.
+function selectedSaNames() {
+  const comps = selectedComponents();
+  return { bdc: comps.includes('BDC'), btp: comps.includes('BTP'), other: comps.includes('OTHER') };
+}
+
+// row가 체크된 컴포넌트에 속하는지. background가 태깅한 _saBucket을 1순위로,
+// 없으면(레거시 응답) SA 문자열 키워드 매칭(saMatches)으로 폴백.
+function bucketMatches(row, active) {
+  const bucket = row && row._saBucket;
+  if (bucket === 'BDC') return active.bdc;
+  if (bucket === 'BTP') return active.btp;
+  if (bucket === 'OTHER') return active.other;
+  // _saBucket 없음 → SA 문자열로 폴백.
+  const v = (row && (row.values || row)) || {};
+  const l = (row && row.labels) || {};
+  const sa = l.Solution_Area_ID || v.Solution_Area_ID || v.Sub_Solution_Area || v.Solution_Area || '';
+  return saMatches(sa, active);
+}
+
+// row의 SA 식별자(코드 SADA/SABTP 또는 이름)가 체크된 컴포넌트에 속하는지.
+function saMatches(saValue, active) {
+  const s = String(saValue || '').toUpperCase();
+  const isBdc = s.includes('SADA') || s.includes('DATA & AI') || s.includes('DATA AND AI') || s.includes('BAIP');
+  const isBtp = s.includes('SABTP') || s.includes('BUSINESS TECHNOLOGY') || s.includes('BTP');
+  if (isBdc) return active.bdc;
+  if (isBtp) return active.btp;
+  // SA를 BDC/BTP로 분류 못하면(기타 SA) Other 버킷으로 취급.
+  return active.other;
+}
+
+// _viewStack을 루트 패널로 리셋하고 렌더. (최초 로드/필터 변경 시 루트로 복귀)
+function resetRootPanel(group, heading, sections) {
+  _viewStack.length = 0;
+  _viewStack.push({ heading, containerGroup: group, sections });
+  renderCurrentPanel();
+}
+
+// 진입점: 캐시 없으면 서버 조회(BDC+BTP 전체) 후 렌더, 있으면 바로 렌더.
+async function loadContract() {
+  if (!_selectedAccount) return;
+  const contractTab = document.getElementById('contractTab');
+  if (!contractTab) return;
+  const body = contractTab.querySelector('.overview-section-body');
+  // stale 가드: 로드 시작 시점의 고객/탭을 캡처. await 후 바뀌었으면 render 중단
+  // (담당자/탭 전환 중 뒤늦게 끝난 응답이 바뀐 화면에 섞여 그려지는 것 방지).
+  const _crmId = _selectedAccount.crmId;
+  const isStale = () => !_selectedAccount || _selectedAccount.crmId !== _crmId || _accountDetailTab !== 'contract';
+
+  try {
+    if (!_contractAll || _contractAll.crmId !== _selectedAccount.crmId) {
+      body.textContent = '계약 정보 로딩 중...';
+      // 항상 BDC+BTP 전체를 받아 캐시. SA 필터는 렌더 단계에서 클라이언트 적용.
+      const accResp = await one360GetAccount(_crmId);
+      if (isStale()) return;
+      if (!accResp.ok) throw new Error(accResp.error);
+      // 선택 고객(CRM) 기준으로만 조회. GU로 하면 계열사 전체가 섞임.
+      const accountId = accResp.account.accountId;
+      const resp = await one360GetContract(accountId);
+      if (isStale()) return;
+      if (!resp.ok) throw new Error(resp.error);
+      _contractAll = { rows: resp.rows || [], accountId, crmId: _crmId };
+    }
+    if (isStale()) return;
+    renderContract();
+  } catch (err) {
+    if (isStale()) return;
+    console.error('[CSM] Contract 로드 실패:', err);
+    body.innerHTML = `<div style="color: #c2185b; font-size: 12px;">오류: ${err.message}</div>`;
+  }
+}
+
+// SA 필터(현재 체크된 컴포넌트) → 클라이언트 필터 → 상태별 그룹핑 → 루트 패널 build.
+function renderContract() {
+  const contractTab = document.getElementById('contractTab');
+  if (!contractTab || !_contractAll) return;
+  const body = contractTab.querySelector('.overview-section-body');
+
+  const activeSaNames = selectedSaNames();
+  const rows = (_contractAll.rows || []).filter(row => bucketMatches(row, activeSaNames));
+
+  if (!rows.length) {
+    body.innerHTML = '<div style="color: var(--text-muted); font-size: 12px;">계약 정보가 없습니다.</div>';
+    resetRootPanel('contract', `${_selectedAccount.name} — Contract`, []);
+    return;
+  }
+
+  // SA별 그룹핑. values(코드값)/labels(사람이 읽는 이름) 함께 보존.
+  const bySa = {};
+  rows.forEach(row => {
+    const v = row.values || {};
+    const l = row.labels || {};
+    const sa = v.Sub_Solution_Area || 'Unknown';
+    if (!bySa[sa]) bySa[sa] = [];
+    bySa[sa].push({ v, l });
+  });
+
+  const sections = Object.entries(bySa).map(([sa, contracts]) => {
+    // Root card: Material별 Order·수량·기간·상태·ACV 1줄 요약.
+    const materialRows = contracts.map(({ v: c, l }) => {
+      const acv = c.Active_ACV_Restricted || c.ACV || 0;
+      const name = l.MaterialID || c.MaterialID || '-';
+      const order = c.Order || c.InitialOrder || '-';
+      const qty = Number(c.Quantity || 0).toLocaleString('en-US');
+      const start = (c.Contract_Start_Date_Item_ || '').slice(0, 10) || '?';
+      const end = (c.Contract_End_Date_Item_ || '').slice(0, 10) || '?';
+      const status = c.Status || '-';
+      return {
+        label: `${name} (Order ${order})`,
+        value: `Qty ${qty} · ${start} ~ ${end} · ${status} · ACV €${Number(acv).toLocaleString('en-US', { maximumFractionDigits: 0 })}`
+      };
+    });
+
+    // Detail panel: 계약 상세 전체 필드. Order/Initial Order 포함(기본화면↔상세 매핑용).
+    const detailSections = contracts.map(({ v: c, l }) => ({
+      title: `${l.MaterialID || c.MaterialID || '-'} (Order ${c.Order || c.InitialOrder || '-'})`,
+      blocks: [
+        {
+          kind: 'kv',
+          rows: [
+            { label: 'Order ID', value: c.Order || '-' },
+            { label: 'Initial Order', value: c.InitialOrder || '-' },
+            { label: 'Type', value: l.SalesDocumentType || c.SalesDocumentType || '-' },
+            { label: 'Status', value: c.Status || '-' },
+            { label: 'Start', value: c.Contract_Start_Date_Item_ || '-' },
+            { label: 'End', value: c.Contract_End_Date_Item_ || '-' },
+            { label: 'Quantity', value: (c.Quantity || 0).toLocaleString('en-US') },
+            { label: 'ACV', value: `€${Number(c.Active_ACV_Restricted || c.ACV || 0).toLocaleString('en-US')}` },
+            { label: 'TCV', value: `€${Number(c.TCV_Restricted || c.TCV || 0).toLocaleString('en-US')}` }
+          ]
+        }
+      ]
+    }));
+
+    return {
+      title: `계약 — ${sa}`,
+      group: 'contract',
+      sa,
+      blocks: [
+        { kind: 'kv', rows: materialRows },
+        { kind: 'text', text: `계약 ${contracts.length}건 (클릭하여 상세)` }
+      ],
+      detail: { heading: `${sa} — 계약`, sections: detailSections }
+    };
+  });
+
+  resetRootPanel('contract', `${_selectedAccount.name} — Contract`, sections);
+}
+
+// ── cACV 탭 데이터 로드 ──────────────────────────────────────────────
+// 진입점: 캐시 없으면 서버 조회(BDC+BTP 전체) 후 렌더, 있으면 바로 렌더.
+async function loadCACV() {
+  if (!_selectedAccount) return;
+  const cacvTab = document.getElementById('cacvTab');
+  if (!cacvTab) return;
+  const body = cacvTab.querySelector('.overview-section-body');
+  // stale 가드(loadContract와 동일): await 후 고객/탭 바뀌었으면 render 중단.
+  const _crmId = _selectedAccount.crmId;
+  const isStale = () => !_selectedAccount || _selectedAccount.crmId !== _crmId || _accountDetailTab !== 'cacv';
+
+  try {
+    if (!_cacvAll || _cacvAll.crmId !== _selectedAccount.crmId) {
+      body.textContent = 'cACV 정보 로딩 중...';
+      const year = new Date().getFullYear();
+      const accResp = await one360GetAccount(_crmId);
+      if (isStale()) return;
+      if (!accResp.ok) throw new Error(accResp.error);
+      const accountId = accResp.account.accountId;  // Account ID (NOT GU ID!)
+      // 항상 BDC+BTP 전체를 받아 캐시.
+      const resp = await one360GetCACV(accountId, ['BDC', 'BTP'], year);
+      if (isStale()) return;
+      if (!resp.ok) throw new Error(resp.error);
+      _cacvAll = { rows: resp.rows || [], accountId, crmId: _crmId };
+    }
+    if (isStale()) return;
+    renderCACV();
+  } catch (err) {
+    if (isStale()) return;
+    console.error('[CSM] cACV 로드 실패:', err);
+    body.innerHTML = `<div style="color: #c2185b; font-size: 12px;">오류: ${err.message}</div>`;
+  }
+}
+
+// SA 필터 → 클라이언트 필터 → 제품별 집계 → 루트 패널 build.
+function renderCACV() {
+  const cacvTab = document.getElementById('cacvTab');
+  if (!cacvTab || !_cacvAll) return;
+  const body = cacvTab.querySelector('.overview-section-body');
+
+  const activeSaNames = selectedSaNames();
+  const cacv = (_cacvAll.rows || []).filter(row => bucketMatches(row, activeSaNames));
+
+  if (!cacv.length) {
+    body.innerHTML = '<div style="color: var(--text-muted); font-size: 12px;">cACV 데이터가 없습니다.</div>';
+    resetRootPanel('cacv', `${_selectedAccount.name} — cACV`, []);
+    return;
+  }
+
+  {
+    // SA별로 그룹핑 + 제품별 집계
+    const bySa = {};
+    cacv.forEach(row => {
+      const v = row.values || row;
+      const l = row.labels || {};
+      // 제품명·SA는 사람이 읽는 label 우선 (one360-extract.js fetchCacv와 동일),
+      // label 없으면 raw value(코드값)로 폴백.
+      const sa = l.Solution_Area_ID || v.Solution_Area_ID || 'Unknown';
+      const product = l.Logical_Product_ID || v.Logical_Product_ID || '(미상 제품)';
+      const month = v.Month ? String(v.Month).slice(0, 7) : v.Month;
+      const cacvValue = Number(v.Monthly_CACV_EUR_Budget_Current_Year_Financial_Restricted || 0);
+
+      if (!bySa[sa]) {
+        bySa[sa] = { products: {}, totalsByMonth: {}, months: new Set() };
+      }
+
+      if (!bySa[sa].products[product]) {
+        bySa[sa].products[product] = { totalsByMonth: {}, months: new Set() };
+      }
+
+      bySa[sa].products[product].totalsByMonth[month] = (bySa[sa].products[product].totalsByMonth[month] || 0) + cacvValue;
+      bySa[sa].products[product].months.add(month);
+      bySa[sa].totalsByMonth[month] = (bySa[sa].totalsByMonth[month] || 0) + cacvValue;
+      bySa[sa].months.add(month);
+    });
+
+    // Build root panel (Obsidian pattern)
+    const sections = Object.entries(bySa).map(([sa, saData]) => {
+      const months = Array.from(saData.months).sort();
+      const latestMonth = months[months.length - 1];
+
+      // Root card: 제품별 최근월 cACV
+      const productRows = Object.entries(saData.products).map(([product, pData]) => {
+        const latestValue = pData.totalsByMonth[latestMonth] || 0;
+        return {
+          label: product,
+          value: `€${latestValue.toLocaleString('en-US', { maximumFractionDigits: 0 })} (${latestMonth})`
+        };
+      }).sort((a, b) => {
+        const aVal = parseFloat(a.value.replace(/[€,]/g, ''));
+        const bVal = parseFloat(b.value.replace(/[€,]/g, ''));
+        return bVal - aVal;
+      });
+
+      // Detail panel: SA 전체 차트 + 제품별 차트
+      const saChartSection = {
+        title: '월별 추이',
+        blocks: [
+          {
+            kind: 'chart',
+            mode: 'bar',
+            valueFmt: 'eur',
+            showAxis: true,
+            showValueLabels: true,
+            labels: months,
+            series: [{
+              label: `${sa} cACV`,
+              values: months.map(m => saData.totalsByMonth[m] || null),
+              tone: 'ok'
+            }]
+          },
+          {
+            kind: 'table',
+            columns: ['Month', 'SA Total (EUR)'],
+            rows: months.map(m => [m, saData.totalsByMonth[m]?.toLocaleString('en-US') || '0'])
+          }
+        ]
+      };
+
+      const productSections = Object.entries(saData.products).map(([product, pData]) => {
+        const pMonths = Array.from(pData.months).sort();
+        return {
+          title: product,
+          blocks: [
+            {
+              kind: 'chart',
+              mode: 'bar',
+              valueFmt: 'eur',
+              showAxis: true,
+              showValueLabels: true,
+              labels: pMonths,
+              series: [{
+                label: product,
+                values: pMonths.map(m => pData.totalsByMonth[m] || null),
+                tone: 'ok'
+              }]
+            },
+            {
+              kind: 'table',
+              columns: ['Month', 'cACV (EUR)'],
+              rows: pMonths.map(m => [m, pData.totalsByMonth[m]?.toLocaleString('en-US') || '0'])
+            }
+          ]
+        };
+      });
+
+      return {
+        title: `cACV — ${sa}`,
+        group: 'cacv',
+        sa,
+        blocks: [
+          { kind: 'kv', rows: productRows },
+          { kind: 'text', text: `제품 ${Object.keys(saData.products).length}개 · 최근월 ${latestMonth} (클릭하여 추이)` }
+        ],
+        detail: {
+          heading: `${sa} — cACV`,
+          sections: [saChartSection, ...productSections]
+        }
+      };
+    });
+
+    resetRootPanel('cacv', `${_selectedAccount.name} — cACV`, sections);
+  }
+}
+
+// ── Consumption 탭 데이터 로드 ────────────────────────────────────────
+// 진입점: 캐시 없으면 서버 조회(BDC+BTP 전체) 후 렌더, 있으면 바로 렌더.
+async function loadConsumption() {
+  if (!_selectedAccount) return;
+  const consumptionTab = document.getElementById('consumptionTab');
+  if (!consumptionTab) return;
+  const body = consumptionTab.querySelector('.overview-section-body');
+  // stale 가드(loadContract와 동일): await 창이 가장 길어(트렌드 병렬 선조회) 레이스 위험 최대.
+  const _crmId = _selectedAccount.crmId;
+  const isStale = () => !_selectedAccount || _selectedAccount.crmId !== _crmId || _accountDetailTab !== 'consumption';
+
+  try {
+    if (!_consumptionAll || _consumptionAll.crmId !== _selectedAccount.crmId) {
+      body.textContent = '사용량 정보 로딩 중...';
+      const accResp = await one360GetAccount(_crmId);
+      if (isStale()) return;
+      if (!accResp.ok) throw new Error(accResp.error);
+      const accountId = accResp.account.accountId;
+      const guId = accResp.account.guAccountId;
+      // 1단계: 메트릭 목록(항상 BDC+BTP 전체).
+      const resp = await one360GetConsumption(accountId, guId);
+      if (isStale()) return;
+      if (!resp.ok) throw new Error(resp.error);
+      const rows = resp.rows || [];
+
+      // 2단계: 각 메트릭의 월별 트렌드를 병렬 선조회(sap-notepad 2단계 플로우).
+      // 기본 카드 수치(used/sub)와 드릴다운 차트 모두 트렌드 최신월을 쓴다.
+      body.textContent = '사용량 추이 조회 중...';
+      const uniq = [];
+      const seen = new Set();
+      rows.forEach(r => {
+        const v = r.values || r;
+        const key = `${r._saId || v.Solution_Area_ID || ''}|${v.MetricID}`;
+        if (v.MetricID && !seen.has(key)) { seen.add(key); uniq.push({ saId: r._saId || v.Solution_Area_ID, metricId: v.MetricID, bucket: r._saBucket }); }
+      });
+      const trendByMetric = {};
+      await Promise.all(uniq.map(async ({ saId, metricId, bucket }) => {
+        try {
+          const tr = await one360GetConsumptionTrend(accountId, saId, metricId);
+          if (tr.ok && tr.rows) trendByMetric[`${saId}|${metricId}`] = { rows: tr.rows, bucket, saId };
+        } catch (_) { /* 개별 실패는 무시, 폴백 처리 */ }
+      }));
+      if (isStale()) return;
+
+      _consumptionAll = { rows, accountId, guId, crmId: _crmId, trendByMetric };
+    }
+    if (isStale()) return;
+    renderConsumption();
+  } catch (err) {
+    if (isStale()) return;
+    console.error('[CSM] Consumption 로드 실패:', err);
+    body.innerHTML = `<div style="color: #c2185b; font-size: 12px;">오류: ${err.message}</div>`;
+  }
+}
+
+// SA 필터 → 클라이언트 필터 → SA별 그룹핑 → 루트 패널 build.
+// 서비스(메트릭) 클릭 시 월별 트렌드를 지연 로드(onEnter)해 Chart.js 라인 차트로 표시.
+function renderConsumption() {
+  const consumptionTab = document.getElementById('consumptionTab');
+  if (!consumptionTab || !_consumptionAll) return;
+  const body = consumptionTab.querySelector('.overview-section-body');
+
+  const activeSaNames = selectedSaNames();
+  const metrics = (_consumptionAll.rows || []).filter(row => bucketMatches(row, activeSaNames));
+
+  if (!metrics.length) {
+    body.innerHTML = '<div style="color: var(--text-muted); font-size: 12px;">사용량 데이터가 없습니다.</div>';
+    resetRootPanel('consumption', `${_selectedAccount.name} — Consumption`, []);
+    return;
+  }
+
+  const trendByMetric = (_consumptionAll && _consumptionAll.trendByMetric) || {};
+
+  // SA별로 그룹핑
+  const bySa = {};
+  metrics.forEach(row => {
+    const v = row.values || {};
+    const sa = v.Solution_Area || 'Unknown';
+    const saId = row._saId || v.Solution_Area_ID || sa;
+    if (!bySa[sa]) bySa[sa] = { saId, list: [] };
+    bySa[sa].list.push({ v, saId });
+  });
+
+  const sections = Object.entries(bySa).map(([sa, { saId: saGroupId, list: mList }]) => {
+    // Root card: 서비스별 트렌드 최신월 Used / Entitled (ratio%).
+    // sap-notepad metricLatestEntry와 동일 — 메트릭 목록의 _Used_1CSW(비율)가 아니라
+    // 트렌드 최신월 No_Utilized_Max_ / No_Entitled_Max_를 쓴다.
+    const serviceRows = mList.map(({ v: m, saId }) => {
+      const label = m.MetricText || m.MetricID;
+      const unlimited = m.Unlimited_Entitlement_Flag === 'X';
+      const latest = latestTrendPoint(trendByMetric[`${saId}|${m.MetricID}`]);
+      // 트렌드 최신월 우선, 없으면 메트릭 목록의 실제값(_ActualMeasured) 폴백. _Used_1CSW(비율)는 미사용.
+      const used = latest ? latest.used : Number(m._ActualMeasured ?? 0);
+      const sub = latest ? latest.sub : Number(m._Licensed ?? 0);
+      if (unlimited) return { label, value: '무제한', tone: undefined };
+      const ratio = sub > 0 ? Math.round((used / sub) * 100) : undefined;
+      const parts = [used.toLocaleString('en-US'), sub.toLocaleString('en-US')].join(' / ');
+      const value = parts + (ratio != null ? ` (${ratio}%)` : '');
+      return { label, value, tone: ratioTone(ratio) };
+    });
+
+    // 메트릭별 드릴다운 섹션 — 선조회 캐시로 즉시 차트 구성(지연 로드 불필요).
+    const detailSections = mList.map(({ v: m, saId }) => {
+      const cached = trendByMetric[`${saId}|${m.MetricID}`];
+      const title = m.MetricText || m.MetricID;
+      if (!cached || !cached.rows || !cached.rows.length) {
+        return { title, blocks: [{ kind: 'text', text: '월별 추이 데이터가 없습니다.' }] };
+      }
+      const pts = cached.rows
+        .map(r => r.values || r)
+        .sort((a, b) => String(a.CalendarMonthYYYYMM).localeCompare(String(b.CalendarMonthYYYYMM)));
+      const months = pts.map(p => fmtMonth(p.CalendarMonthYYYYMM));
+      const measured = pts.map(p => Number(p.No_Utilized_Max_ || 0));
+      const subscribed = pts.map(p => Number(p.No_Entitled_Max_ || 0));
+      return {
+        title,
+        blocks: [
+          {
+            kind: 'chart', mode: 'line', showAxis: true, labels: months,
+            series: [
+              { label: 'Used', values: measured, tone: 'ok' },
+              { label: 'Entitled', values: subscribed, tone: 'warn' }
+            ]
+          },
+          {
+            kind: 'table', columns: ['Month', 'Used', 'Entitled', '%'],
+            rows: pts.map((p, i) => {
+              const r = subscribed[i] > 0 ? Math.round((measured[i] / subscribed[i]) * 100) + '%' : '';
+              return [months[i], measured[i].toLocaleString('en-US'), subscribed[i].toLocaleString('en-US'), r];
+            })
+          }
+        ]
+      };
+    });
+
+    return {
+      title: `사용량 — ${sa}`,
+      group: 'consumption',
+      sa,
+      blocks: [
+        { kind: 'kv', rows: serviceRows },
+        { kind: 'text', text: `서비스 ${mList.length}개 (클릭하여 추이)` }
+      ],
+      detail: { heading: `${sa} — 사용량`, sections: detailSections }
+    };
+  });
+
+  resetRootPanel('consumption', `${_selectedAccount.name} — Consumption`, sections);
+}
+
+// 트렌드 캐시 엔트리 → 최신월 { used, sub }. (No_Utilized_Max_ / No_Entitled_Max_)
+function latestTrendPoint(entry) {
+  if (!entry || !entry.rows || !entry.rows.length) return null;
+  const pts = entry.rows
+    .map(r => r.values || r)
+    .sort((a, b) => String(a.CalendarMonthYYYYMM).localeCompare(String(b.CalendarMonthYYYYMM)));
+  const last = pts[pts.length - 1];
+  if (!last) return null;
+  return { used: Number(last.No_Utilized_Max_ || 0), sub: Number(last.No_Entitled_Max_ || 0) };
+}
+
+// 사용률 톤 (sap-notepad ratioTone과 동일): >=100 danger, >=85 warn, else ok.
+function ratioTone(ratio) {
+  if (ratio == null) return undefined;
+  if (ratio >= 100) return 'warn';
+  if (ratio >= 85) return 'warn';
+  return 'ok';
+}
+
+// YYYYMM 또는 YYYY-MM-DD → YYYY-MM
+function fmtMonth(raw) {
+  const s = String(raw || '');
+  if (/^\d{6}$/.test(s)) return `${s.slice(0, 4)}-${s.slice(4, 6)}`;
+  return s.slice(0, 7);
+}
 
 // 페이지 로드 시 notifications 배지 초기화
 (async () => {

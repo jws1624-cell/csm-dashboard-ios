@@ -49,7 +49,7 @@
     <span class="filter-label">Component:</span>
     <label class="chk-label"><input type="checkbox" class="comp-chk" value="BDC" checked><span>BDC</span></label>
     <label class="chk-label"><input type="checkbox" class="comp-chk" value="BTP" checked><span>BTP</span></label>
-    <label class="chk-label"><input type="checkbox" class="comp-chk" value="ALL"><span>All</span></label>
+    <label class="chk-label"><input type="checkbox" class="comp-chk" value="OTHER"><span>Other</span></label>
   </div>
 </div>
 
@@ -154,6 +154,49 @@
 
   <!-- 고객사 리스트 -->
   <div id="accountList" class="list-container"></div>
+
+  <!-- 고객사 상세 (Contract/cACV/Consumption/Cases 탭) -->
+  <div id="accountDetailContainer" class="hidden">
+    <div class="account-detail-tabs">
+      <button class="account-detail-tab" data-tab="contract" title="Contract">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M4 1h8a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1zm0 1v12h8V2H4zm1 2h6v1H5V4zm0 2h6v1H5V6zm0 2h4v1H5V8z"/></svg>
+        <span>Contract</span>
+      </button>
+      <button class="account-detail-tab" data-tab="cacv" title="cACV">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M2 3.5A1.5 1.5 0 0 1 3.5 2h9A1.5 1.5 0 0 1 14 3.5v9a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 12.5v-9zM3.5 3a.5.5 0 0 0-.5.5v9a.5.5 0 0 0 .5.5h9a.5.5 0 0 0 .5-.5v-9a.5.5 0 0 0-.5-.5h-9zM5.5 7a.5.5 0 0 1 .5-.5h4a.5.5 0 0 1 0 1H6a.5.5 0 0 1-.5-.5zm0 2a.5.5 0 0 1 .5-.5h4a.5.5 0 0 1 0 1H6a.5.5 0 0 1-.5-.5z"/></svg>
+        <span>cACV</span>
+      </button>
+      <button class="account-detail-tab" data-tab="consumption" title="Consumption">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M1 3v10.5A1.5 1.5 0 0 0 2.5 15h11a1.5 1.5 0 0 0 1.5-1.5V3H1zm13 1v9.5a.5.5 0 0 1-.5.5h-11a.5.5 0 0 1-.5-.5V4h12zM2 1h12v1H2V1zm3 6h2v5H5V7zm3 2h2v3H8V9zm3-1h2v4h-2V8z"/></svg>
+        <span>Consumption</span>
+      </button>
+      <button class="account-detail-tab active" data-tab="cases" title="Cases">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M3.5 2A1.5 1.5 0 0 0 2 3.5v9A1.5 1.5 0 0 0 3.5 14h9a1.5 1.5 0 0 0 1.5-1.5v-9A1.5 1.5 0 0 0 12.5 2h-9zM3 3.5a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 .5.5v9a.5.5 0 0 1-.5.5h-9a.5.5 0 0 1-.5-.5v-9zM5.5 6a.5.5 0 0 0 0 1h5a.5.5 0 0 0 0-1h-5zm0 2a.5.5 0 0 0 0 1h5a.5.5 0 0 0 0-1h-5zm0 2a.5.5 0 0 0 0 1h3a.5.5 0 0 0 0-1h-3z"/></svg>
+        <span>Cases</span>
+      </button>
+    </div>
+    <div id="accountDetailContent">
+      <!-- Contract 탭 -->
+      <div id="contractTab" class="account-detail-panel hidden">
+        <div class="overview-section">
+          <div class="overview-section-body">계약 정보 로딩 중...</div>
+        </div>
+      </div>
+      <!-- cACV 탭 -->
+      <div id="cacvTab" class="account-detail-panel hidden">
+        <div class="overview-section">
+          <div class="overview-section-body">cACV 정보 로딩 중...</div>
+        </div>
+      </div>
+      <!-- Consumption 탭 -->
+      <div id="consumptionTab" class="account-detail-panel hidden">
+        <div class="overview-section">
+          <div class="overview-section-body">사용량 정보 로딩 중...</div>
+        </div>
+      </div>
+      <!-- Cases 탭 컨텐츠는 기존 caseList 재활용 -->
+    </div>
+  </div>
 
   <!-- 스켈레톤 -->
   <div id="skeletonList" class="list-container hidden">
@@ -341,6 +384,7 @@
   </div>
 </div>
 
+<script src="chart.min.js"></script>
 <script src="sidepanel.js"></script>
 <script>
 // 디버그: iframe 존재 확인

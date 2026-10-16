@@ -50,35 +50,33 @@
     }
   }
 
-  // 전역 함수로 재연결 요청 노출 - Safari 탭을 ITSM으로 리다이렉트
+  // 전역 함수로 재연결 요청 노출 - Safari 탭을 ITSM으로 리다이렉트 후 g_ck 유효성 폴링.
+  // 로그인 소요 시간이 가변적이므로 고정 대기가 아니라 fetchGck 성공까지 1초 간격 폴링,
+  // 시간은 timeout 상한으로만 쓴다. popup은 활성 탭과 별개 WebView라 리다이렉트해도 살아있다.
   window.retriggerSso = async function(callback) {
     console.log('[init] 🔄 SSO 재연결 요청 - Safari를 ITSM으로 리다이렉트');
 
+    // 리다이렉트 전에 먼저 한 번 확인 — 세션이 이미 있으면(쿠키 유효) 리다이렉트 없이 즉시 성공.
+    if (await fetchGck()) { console.log('[init] 리다이렉트 불필요 - g_ck 즉시 획득'); if (callback) callback(true); return; }
+
     try {
-      // 현재 탭을 ITSM으로 리다이렉트
       const tabs = await browserAPI.tabs.query({ active: true, currentWindow: true });
-      if (tabs.length > 0) {
-        const tab = tabs[0];
-        console.log('[init] 현재 탭을 ITSM으로 리다이렉트:', tab.url);
-
-        // ITSM으로 이동 (SSO가 제대로 동작하는 URL)
-        await browserAPI.tabs.update(tab.id, { url: 'https://itsm.services.sap/now/cwf/agent/home/list' });
-
-        // 3초 대기 후 g_ck 재시도
-        setTimeout(async () => {
-          console.log('[init] SSO 완료 대기 후 g_ck 재획득');
-          const success = await fetchGck();
-          console.log('[init] g_ck 재획득 결과:', success);
-          if (callback) callback(success);
-        }, 3000);
-      } else {
-        console.error('[init] 활성 탭을 찾을 수 없음');
-        if (callback) callback(false);
-      }
+      if (tabs.length === 0) { if (callback) callback(false); return; }
+      await browserAPI.tabs.update(tabs[0].id, { url: 'https://itsm.services.sap/now/cwf/agent/home/list' });
     } catch (e) {
       console.error('[init] 탭 리다이렉트 실패:', e);
       if (callback) callback(false);
+      return;
     }
+
+    // g_ck 재획득을 1초 간격 폴링(최대 90초). 로그인 완료되는 즉시 성공.
+    const deadline = Date.now() + 90000;
+    const poll = async () => {
+      if (await fetchGck()) { console.log('[init] g_ck 획득 완료'); if (callback) callback(true); return; }
+      if (Date.now() >= deadline) { console.log('[init] g_ck 폴링 타임아웃'); if (callback) callback(false); return; }
+      setTimeout(poll, 1000);
+    };
+    setTimeout(poll, 1000);
   };
 
   // 페이지 로드 시 자동 실행
