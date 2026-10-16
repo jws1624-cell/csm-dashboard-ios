@@ -55,7 +55,8 @@
 
 <!-- ── 담당자 탭 ──────────────────────────── -->
 <div class="owner-tabs">
-  <button class="owner-tab owner-tab-fixed" data-key="notifications" data-i18n="tabNotifications">🔔 Notifications<span id="notifBadge" class="tab-badge">0</span></button>
+  <!-- Notifications 탭 제거(모바일): 로드 시 ITSM 케이스 폴링이 세션 없을 때 401을 도배하고
+       storage quota를 넘기던 기능. 크롬에서도 재고 중이라 모바일에서는 제외. -->
   <button class="owner-tab owner-tab-fixed active" data-key="all" data-i18n="tabAll">전체</button>
   <div class="owner-tabs-scroll" id="ownerTabsScroll"></div>
   <button class="owner-tab owner-tab-fixed" data-key="favourite">⭐ Favourite</button>
@@ -139,18 +140,7 @@
 <!-- ── 메인 패널 ──────────────────────────── -->
 <div id="mainPanel" class="main-panel">
 
-  <!-- Notifications 탭 컨텐츠 -->
-  <div id="tabNotifications" class="tab-content hidden">
-    <div id="notifBusy" class="ai-busy hidden" data-i18n="notifChecking">변경사항 확인 중…</div>
-    <div id="notifEmpty" class="empty-state hidden" data-i18n="notifEmpty">새로운 알림이 없습니다.</div>
-    <div id="notifList" class="notif-list hidden">
-      <div class="notif-header">
-        <span class="notif-title" data-i18n="notifTitle">케이스 업데이트</span>
-        <button id="btnClearAllNotif" class="btn-ghost btn-xs" data-i18n="notifClearAll">Clear All</button>
-      </div>
-      <div id="notifItems" class="notif-items"></div>
-    </div>
-  </div>
+  <!-- Notifications 탭 컨텐츠 제거(모바일) — 위 탭 버튼과 함께 제외 -->
 
   <!-- 고객사 리스트 -->
   <div id="accountList" class="list-container"></div>

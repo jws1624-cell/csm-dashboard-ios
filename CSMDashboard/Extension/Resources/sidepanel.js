@@ -2,22 +2,9 @@
 
 console.log('🔵 sidepanel.js 로드됨 - 버전: 2026-10-14-v8-auto');
 
-// 페이지 로드 시 자동으로 세션 상태 확인
-setTimeout(async () => {
-  console.log('[CSM] 자동 세션 체크 시작');
-  try {
-    await itsmFetch('/api/now/ui/user/current_user');
-    console.log('[CSM] ✅ 세션 정상');
-  } catch (err) {
-    const errMsg = err.message || '';
-    if (errMsg.includes('ITSM 세션') || errMsg.includes('Safari에서') || errMsg.includes('세션 확보')) {
-      console.log('[CSM] ⚠️ 세션 없음 감지 - 자동 재연결 시작');
-      document.body.insertAdjacentHTML('afterbegin', '<div style="position:fixed;top:0;left:0;right:0;background:#ff9800;color:#fff;padding:8px;text-align:center;z-index:99999">🔄 ITSM 세션 자동 연결 중...</div>');
-    } else {
-      console.log('[CSM] ✅ 세션 정상');
-    }
-  }
-}, 2000);
+// 로드 시 선제 ITSM 세션 체크는 하지 않는다. ONE360로 시작했는데도 current_user를
+// 때려 ensureSession('itsm')→500ms×90초 폴링(sys_user 401 난사)에 빠지던 원인이었다.
+// ITSM 세션은 사용자가 실제 ITSM 조회(doSearch→Case)를 할 때 itsmFetch가 lazy 확보한다.
 
 // Safari Extension 호환성 레이어
 const browserAPI = typeof browser !== 'undefined' ? browser : chrome;
@@ -967,8 +954,7 @@ async function renderFavouriteList() {
   const accounts = _favourites.filter(f => f.type !== 'case');
   const cases = _favourites.filter(f => f.type === 'case');
 
-  // Notifications 탭 숨기기
-  document.getElementById('tabNotifications').classList.add('hidden');
+  // Notifications 제거(모바일) — 숨길 탭 없음
 
   if (!accounts.length && !cases.length) {
     list.innerHTML = `<div class="empty-state">${t('favEmpty')}<br><span style="font-size:11px;color:#888">${t('favEmptyHint')}</span></div>`;
@@ -1137,8 +1123,7 @@ async function renderAccountList(crmIds) {
   // 시작 시점의 selectedOwnerKey 캡처 — 완료 시 비교용
   const startKey = selectedOwnerKey;
 
-  // Notifications 탭 숨기기
-  document.getElementById('tabNotifications').classList.add('hidden');
+  // Notifications 제거(모바일) — 숨길 탭 없음
 
   const accounts = await loadKoreaAccounts();
   const map = buildCrmMap(accounts);
@@ -3061,11 +3046,9 @@ async function init() {
     if (tab) tab.classList.add('active');
     selectedOwnerKey = key;
 
-    // 시작 탭 렌더링 완료까지 대기
+    // 시작 탭 렌더링 완료까지 대기 (Notifications 제거: 알림 분기 없음)
     try {
-      if (key === 'notifications') {
-        await renderNotifications();
-      } else if (key === 'favourite') {
+      if (key === 'favourite') {
         await renderFavouriteList();
       } else {
         const owner = _owners.find(o => o.key === key);
@@ -3076,8 +3059,9 @@ async function init() {
       console.error('[CSM] Start tab render failed:', error);
     }
 
-    // 1. 시작 탭 렌더링 완료 후 백그라운드 체크 시작
-    checkUpdatesBackground();
+    // Notifications 제거(모바일): 로드 시 ITSM 케이스 폴링(checkUpdatesBackground)을 하지 않는다.
+    // 세션 없을 때 저장 케이스 N개가 동시에 itsmFetch→probe(401)를 찍어 콘솔을 도배하고
+    // storage quota를 넘기던 원인. 알림 기능 자체를 모바일에서 뺀다.
   });
 
   document.querySelectorAll('.start-tab-btn').forEach(btn => {
@@ -3134,11 +3118,6 @@ async function init() {
     btn.style.transition = 'transform 0.4s';
     btn.style.transform = 'rotate(360deg)';
     setTimeout(() => { btn.style.transition = ''; btn.style.transform = ''; }, 420);
-
-    // Notifications 탭이면 리렌더링 안 함 (백그라운드 체크만 실행)
-    if (selectedOwnerKey === 'notifications') {
-      return; // 새로고침 버튼 클릭 시 checkUpdatesBackground()는 별도 핸들러에서 실행됨
-    }
 
     if (_currentView === 'account') {
       // 고객사 목록 화면 → 목록 재렌더
@@ -3548,9 +3527,7 @@ function renderOwnerTabs() {
       _selectedAccount = null;
       _accountDetailTab = 'cases';
       _contractAll = _cacvAll = _consumptionAll = null;
-      if (selectedOwnerKey === 'notifications') {
-        await renderNotifications();
-      } else if (selectedOwnerKey === 'favourite') {
+      if (selectedOwnerKey === 'favourite') {
         await renderFavouriteList();
       } else {
         const ids = [...new Set(_owners.flatMap(o => o.ids))];
@@ -3569,7 +3546,6 @@ function renderStartTabButtons() {
   row.innerHTML = '';
 
   const fixed = [
-    { key: 'notifications', label: () => t('tabNotifications') },
     { key: 'all', label: () => t('tabAll') },
     { key: 'favourite', label: () => '⭐ Favourite' }
   ];
@@ -3588,7 +3564,6 @@ function renderStartTabButtons() {
     return btn;
   };
 
-  addBtn('notifications', t('tabNotifications'));
   addBtn('all', t('tabAll'));
   _owners.forEach(o => addBtn(o.key, o.name.split(' ')[0]));
   addBtn('favourite', '⭐ Favourite');
@@ -3803,20 +3778,23 @@ function saveOwners() {
   });
 }
 
+// Notifications 제거(모바일): 폴백/기본 시작탭을 'all'로. 'notifications'가 저장돼 있던
+// 기존 사용자도 'all'로 수렴시켜 알림 렌더 경로로 못 들어가게 한다.
 function ownerKeyToStartTab(key) {
-  if (key === 'notifications' || key === 'all' || key === 'favourite') return key;
+  if (key === 'all' || key === 'favourite') return key;
   const idx = _owners.findIndex(o => o.key === key);
-  return idx >= 0 ? `owner:${idx}` : 'notifications';
+  return idx >= 0 ? `owner:${idx}` : 'all';
 }
 
 function startTabToOwnerKey(val) {
-  if (!val || val === 'notifications' || val === 'all' || val === 'favourite') return val || 'notifications';
+  if (val === 'notifications') return 'all';
+  if (!val || val === 'all' || val === 'favourite') return val || 'all';
   if (val.startsWith('owner:')) {
     const idx = parseInt(val.slice(6), 10);
-    return _owners[idx] ? _owners[idx].key : 'notifications';
+    return _owners[idx] ? _owners[idx].key : 'all';
   }
   const owner = _owners.find(o => o.key === val);
-  return owner ? owner.key : 'notifications';
+  return owner ? owner.key : 'all';
 }
 
 // ═══════════ Notifications 탭 로직 ═══════════
@@ -4270,10 +4248,7 @@ function formatTimeAgo(isoString) {
   return `${diffDays}일 전`;
 }
 
-// 2. 새로고침 시 백그라운드 체크 (모든 탭에서 실행)
-document.getElementById('btnRefresh').addEventListener('click', () => {
-  checkUpdatesBackground();
-});
+// Notifications 제거(모바일): 새로고침 시 백그라운드 케이스 체크를 하지 않는다.
 
 
 // ══════════════════════════════════════════════════════════════════════════

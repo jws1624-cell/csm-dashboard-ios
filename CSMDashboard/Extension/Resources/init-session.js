@@ -32,7 +32,11 @@
   // OAuth 리다이렉트 체인(one360→XSUAA→IAS→복귀)이 느린 날 20초를 넘길 수 있어, 20초면
   // 완료 직전에 폴링이 포기해 "실패"로 떨어진다(사용자가 겪은 'redirect 후 바로 오류'의 원인).
   // 사람 입력이 없더라도 네트워크/리다이렉트 지연을 넉넉히 흡수하도록 90초로 둔다.
-  const SESSION_TIMEOUT_MS = 90000; // 시스템당 폴링 상한
+  const SESSION_TIMEOUT_MS = 90000; // redirect를 실제로 건 뒤 SSO 완료 대기 상한
+  // 활성 탭이 IdP(OAuth 진행 중)라 redirect를 생략한 경우의 짧은 대기.
+  // 진행 중 OAuth가 곧 끝날 수 있으니 잠깐은 기다리되, redirect로 유도한 게 아니므로
+  // 90초를 끌면 안 된다(헛폴링 플러드). 짧게 보고 포기 → 사용자가 실제 조회를 누르면 재확보.
+  const IDP_WAIT_MS = 15000;        // skip-idp 폴링 상한
   const POLL_INTERVAL_MS = 500;     // 폴링 간격
   const TOKEN_TTL_MS = 15 * 60 * 1000;
 
@@ -69,6 +73,7 @@
   function registerSystem(cfg) {
     cfg.token = cfg.token || { value: null, expiry: 0 };
     cfg._ssoPromise = null;
+    cfg._probePromise = null;
     SYSTEMS[cfg.key] = cfg;
   }
 
@@ -131,29 +136,32 @@
   //   - 자기/상대 시스템 도메인(itsm/one360)은 400 에러·stale 페이지일 수 있어 그냥 redirect (안 하면 갇힘).
   //   - IdP 도메인만 "진행 중"의 신뢰 가능한 신호 → 생략하고 폴링으로 완료를 기다린다.
   // 동시성(ITSM↔ONE360 핑퐁)은 상위 _acquireChain 직렬화가 보장한다.
+  // 반환: 'redirected'(실제 redirect함) | 'skip-idp'(OAuth 진행중이라 생략) | 'no-redirect'(탭없음/실패).
+  // 이 구분이 중요한 이유: redirect를 실제로 걸지 않았으면 폴링해도 새 쿠키가 들어올 길이 없어
+  // 90초 폴링은 sys_user(401)만 난사하는 헛짓이 된다. 호출부(ensureSession)가 이에 맞춰 폴링을 조절.
   async function acquireRedirect(cfg) {
     let tab;
     try {
       const tabs = await browserAPI.tabs.query({ active: true, currentWindow: true });
       tab = tabs && tabs[0];
     } catch (e) {
-      console.log('[CSMSession] tabs.query 실패 - redirect 생략, 폴링만:', e && e.message);
-      return false; // 탭 못 잡아도 폴링은 상위에서 계속 돈다
+      console.log('[CSMSession] tabs.query 실패 - redirect 생략:', e && e.message);
+      return 'no-redirect';
     }
-    if (!tab) { console.log('[CSMSession] 활성 탭 없음 - redirect 생략, 폴링만'); return false; }
+    if (!tab) { console.log('[CSMSession] 활성 탭 없음 - redirect 생략'); return 'no-redirect'; }
     // IdP에서 OAuth 진행 중이면 건드리지 않는다(code invalid 400 방지).
     if (IDP_RE.test(tab.url || '')) {
-      console.log('[CSMSession] ' + cfg.key + ': 활성 탭이 IdP(OAuth 진행 중) - redirect 생략, 폴링 대기', (tab.url || '').slice(0, 70));
-      return true;
+      console.log('[CSMSession] ' + cfg.key + ': 활성 탭이 IdP(OAuth 진행 중) - redirect 생략, 짧게 대기', (tab.url || '').slice(0, 70));
+      return 'skip-idp';
     }
     try {
       await browserAPI.tabs.update(tab.id, { url: cfg.loginUrl });
       console.log('[CSMSession] ' + cfg.key + ': Safari를 ' + cfg.loginUrl + ' 으로 리다이렉트(SSO 유도)');
     } catch (e) {
       console.error('[CSMSession] ' + cfg.key + ' redirect 실패:', e && e.message);
-      return false;
+      return 'no-redirect';
     }
-    return true;
+    return 'redirected';
   }
 
   // ── 대기: 경량 프로브 폴링 ─────────────────────────────────────────────
@@ -182,16 +190,34 @@
     if (!cfg) { console.warn('[CSMSession] 미등록 시스템:', key); return false; }
     // 1) 토큰 캐시 유효(ITSM) → 즉시.
     if (cfg.needsToken && cfg.token.value && Date.now() < cfg.token.expiry) return true;
-    // 2) 경량 프로브로 현 상태 판정.
+    // 1.5) 이미 확보(redirect+폴링)가 진행 중이면 중복 프로브 없이 그 결과를 기다린다.
+    //      확장 로드 시 itsmFetch가 동시 10여 개 들어오면 각자 probe(401)를 찍어 콘솔이
+    //      401로 도배되던 문제의 핵심 — 진행 중이면 다시 확인하지 말고 수렴시킨다.
+    if (cfg._ssoPromise) return cfg._ssoPromise;
+    // 2) 경량 프로브로 현 상태 판정. 동시 진입은 _probePromise로 묶어 probe도 1회만.
     let res;
-    try { res = await cfg.probe(cfg); } catch (_) { res = { state: 'invalid' }; }
+    try {
+      if (!cfg._probePromise) {
+        cfg._probePromise = Promise.resolve()
+          .then(() => cfg.probe(cfg))
+          .finally(() => { cfg._probePromise = null; });
+      }
+      res = await cfg._probePromise;
+    } catch (_) { res = { state: 'invalid' }; }
     if (res.state === 'valid') return true;
+    // 2.5) 프로브를 기다리는 사이 다른 호출이 확보를 시작했을 수 있다 → 그걸 공유.
+    if (cfg._ssoPromise) return cfg._ssoPromise;
     // 3) 세션없음 → 전역 체인에 직렬로 붙여 확보(redirect+폴링). 시스템당 Promise 1개 공유.
     //    같은 시스템 동시 호출은 cfg._ssoPromise로 수렴, 다른 시스템은 _acquireChain으로 순차 실행.
     if (!cfg._ssoPromise) {
       const run = _acquireChain.then(async () => {
-        await acquireRedirect(cfg);
-        return pollUntilValid(cfg, Date.now() + SESSION_TIMEOUT_MS);
+        const r = await acquireRedirect(cfg);
+        // redirect를 실제로 건 경우에만 SSO 완료를 길게(90초) 기다린다.
+        if (r === 'redirected') return pollUntilValid(cfg, Date.now() + SESSION_TIMEOUT_MS);
+        // IdP OAuth 진행 중이라 생략한 경우: 곧 끝날 수 있으니 짧게만(15초) 보고 포기.
+        if (r === 'skip-idp')  return pollUntilValid(cfg, Date.now() + IDP_WAIT_MS);
+        // 탭없음/실패: redirect를 못 걸었으니 폴링해도 새 쿠키가 안 들어온다 → 즉시 실패.
+        return false;
       });
       // 한 시스템 확보 실패가 다음 시스템을 막지 않도록 체인은 항상 이어감.
       _acquireChain = run.then(() => {}, () => {});
@@ -227,7 +253,9 @@
     ensureSession('itsm').then((ok) => { if (callback) callback(ok); });
   };
 
-  // 페이지 로드 시 ITSM 세션 상태를 미리 한 번 프로브(실패해도 무해, 이후 lazy 확보).
-  itsmProbe(SYSTEMS.itsm).catch(() => {});
+  // 로드 시 선제 ITSM 프로브는 하지 않는다. ONE360만 쓰려고 확장을 열었는데도
+  // ITSM 세션을 잡으려다(그리고 활성 탭이 ONE360라 redirect 못 걸고) 500ms 폴링이
+  // 90초간 sys_user(401)를 난사하던 원인. ITSM 세션은 첫 ITSM 조회 때 itsmFetch가
+  // ensureSession('itsm')으로 lazy 확보하므로 여기서 미리 할 필요가 없다.
 
 })();
