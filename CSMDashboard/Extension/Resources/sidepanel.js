@@ -1746,6 +1746,31 @@ async function applyComponentFilter() {
   renderCaseList(filtered);
 }
 
+// ── 인페이지 토스트 ─────────────────────────────────────────────────────
+// iOS Safari 확장 popup WebView에서는 window.alert()가 조용히 무시된다(일반 탭은 뜸).
+// MCC Escalation 안내처럼 "브라우저는 되는데 확장은 안 뜨던" 알림을 이걸로 대체한다.
+// kind: 'success' | 'error' | 'info'(기본). 2.5초 뒤 자동 소멸. 메시지는 textContent로만 넣어 XSS 차단.
+let _toastTimer = null;
+function showToast(msg, kind) {
+  let el = document.getElementById('csmToast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'csmToast';
+    el.className = 'csm-toast';
+    document.body.appendChild(el);
+  }
+  el.className = 'csm-toast toast-' + (kind || 'info');
+  el.textContent = msg;
+  // 리플로우 강제 후 show 클래스로 페이드인(연속 호출 시에도 애니메이션 재생).
+  void el.offsetWidth;
+  el.classList.add('show');
+  if (_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => {
+    el.classList.remove('show');
+    setTimeout(() => { if (el && el.parentNode && !el.classList.contains('show')) el.remove(); }, 250);
+  }, 2500);
+}
+
 function showError(msg, detail) {
   const el = document.getElementById('errorState');
 
@@ -2535,9 +2560,9 @@ async function openMccModal() {
   if (!selectedCase) return;
   const c = selectedCase;
 
-  // 이미 에스컬레이션 존재 시 안내 후 종료
+  // 이미 에스컬레이션 존재 시 안내 후 종료 (확장 popup에선 alert이 안 떠서 토스트로)
   if (c.mcc_escalated) {
-    alert(`${c.number} ${t('mccAlreadyEscalated')}`);
+    showToast(`${c.number} ${t('mccAlreadyEscalated')}`, 'info');
     return;
   }
 
@@ -2832,13 +2857,13 @@ async function submitMcc(c, backdrop) {
         badges.insertBefore(badge, badges.querySelector('.watch-btn'));
       }
       backdrop.remove();
-      alert(`${t('mccSuccess')}: ${ritm}`);
+      showToast(`${t('mccSuccess')}: ${ritm}`, 'success');
 
     } catch (e) {
       console.error('[CSM] MCC 제출 실패:', e);
       btn.disabled = false;
       btn.textContent = t('mccSubmit');
-      alert(t('mccFailed') + ': ' + e.message);
+      showToast(t('mccFailed') + ': ' + e.message, 'error');
     }
   })();
 }

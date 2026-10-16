@@ -1279,3 +1279,33 @@ select {
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+
+/* ── 인페이지 토스트 ─────────────────────────────────────────────
+   iOS Safari 확장 popup WebView에서는 window.alert()가 조용히 무시된다
+   (일반 Safari 탭에서는 뜸). MCC Escalation 등의 안내가 "브라우저는 되는데
+   확장은 안 뜨는" 원인. 네이티브 다이얼로그 대신 인페이지 토스트로 표시한다.
+   모달(z-index 200) 위에도 보이도록 2000으로 둔다. */
+.csm-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%) translateY(8px);
+  max-width: 90%;
+  padding: 10px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: #fff;
+  background: #333;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.28);
+  z-index: 2000;
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  text-align: center;
+  word-break: break-word;
+}
+.csm-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.csm-toast.toast-success { background: #1a7f37; }
+.csm-toast.toast-error { background: #b42318; }
+.csm-toast.toast-info { background: #333; }
