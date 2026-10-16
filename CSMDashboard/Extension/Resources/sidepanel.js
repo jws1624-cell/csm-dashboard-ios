@@ -771,6 +771,26 @@ function extractNoteLinks(rawJournal) {
 // ── ITSM 통신 (background로 위임, 세션 만료 시 자동 재연결) ──────────
 let _reconnecting = null; // 재연결 중인 Promise (중복 재연결 방지)
 
+// ITSM SSO 공유 가드: 여러 itsmFetch 호출(doSearch의 병렬 N개 + 메인 조회)이 동시에
+// 세션 없음을 만나도 retriggerSso를 1회만 돌리고 모두 같은 폴링을 공유한다.
+// ONE360의 _one360Redirected 가드와 동형. retriggerSso 내부가 90초 폴링하므로,
+// 이 Promise 하나를 await하면 "SSO가 진행 중이면 끝날 때까지 함께 대기"가 성립한다.
+// (각 호출이 제각기 retriggerSso를 부르면 활성 탭을 여러 번 redirect해 진행 중 SSO가 끊김)
+let _itsmSsoPromise = null;
+async function ensureItsmSession() {
+  // 이미 세션이 생겼으면(다른 호출이 공유 폴링으로 확보) 재-redirect/폴링 없이 즉시 성공.
+  if (window._gck && Date.now() < window._gckExpiry) return true;
+  if (typeof window.retriggerSso !== 'function') return false;
+  // 진행 중인 폴링이 있으면 그걸 공유. 없을 때만 1개 생성 → retriggerSso(=redirect) 1회로 수렴.
+  if (!_itsmSsoPromise) {
+    _itsmSsoPromise = new Promise((resolve) => window.retriggerSso(resolve))
+      .finally(() => { _itsmSsoPromise = null; });
+  }
+  const ok = await _itsmSsoPromise;
+  // 폴링이 성공으로 끝났으면 window._gck가 채워져 있다. 둘 다 확인해 반환.
+  return ok && !!window._gck && Date.now() < window._gckExpiry;
+}
+
 // background.js 없이 직접 ITSM API 호출
 async function itsmFetch(path, _retried = false) {
   console.log('[CSM] itsmFetch →', path.slice(0, 100), '_retried=', _retried);
@@ -779,17 +799,12 @@ async function itsmFetch(path, _retried = false) {
 
   // g_ck 획득
   if (!window._gck || Date.now() >= window._gckExpiry) {
-    console.log('[CSM] g_ck 없음 또는 만료 - 재시도 필요');
-    if (!_retried && typeof window.retriggerSso === 'function') {
-      console.log('[CSM] 🔄 SSO 재연결 시작');
-      await new Promise((resolve) => {
-        window.retriggerSso((success) => {
-          console.log('[CSM] SSO 재연결 결과:', success);
-          resolve(success);
-        });
-      });
-      await new Promise(r => setTimeout(r, 500));
-      return itsmFetch(path, true);
+    console.log('[CSM] g_ck 없음 또는 만료 - 공유 SSO 가드 대기');
+    if (!_retried) {
+      // ensureItsmSession은 내부에서 최대 90초 폴링을 끝낸 뒤 반환한다(진행 중 SSO면 함께 대기).
+      // true면 window._gck가 이미 채워진 상태 → 재귀 1회로 원래 요청 수행. false일 때만 throw.
+      const ok = await ensureItsmSession();
+      if (ok) return itsmFetch(path, true);
     }
     throw new Error('ITSM 세션 없음');
   }
@@ -816,13 +831,9 @@ async function itsmFetch(path, _retried = false) {
     if (response.status === 401) {
       window._gck = null;
       window._gckExpiry = 0;
-      if (!_retried && typeof window.retriggerSso === 'function') {
-        console.log('[CSM] 401 - SSO 재연결');
-        await new Promise((resolve) => {
-          window.retriggerSso((success) => resolve(success));
-        });
-        await new Promise(r => setTimeout(r, 500));
-        return itsmFetch(path, true);
+      if (!_retried) {
+        const ok = await ensureItsmSession();
+        if (ok) return itsmFetch(path, true);
       }
       throw new Error('ITSM 인증 실패');
     }
@@ -849,13 +860,9 @@ async function itsmFetch(path, _retried = false) {
   if (response.status === 401) {
     window._gck = null;
     window._gckExpiry = 0;
-    if (!_retried && typeof window.retriggerSso === 'function') {
-      console.log('[CSM] 401 - SSO 재연결');
-      await new Promise((resolve) => {
-        window.retriggerSso((success) => resolve(success));
-      });
-      await new Promise(r => setTimeout(r, 500));
-      return itsmFetch(path, true);
+    if (!_retried) {
+      const ok = await ensureItsmSession();
+      if (ok) return itsmFetch(path, true);
     }
     throw new Error('ITSM 인증 실패');
   }
@@ -1784,27 +1791,27 @@ function showError(msg, detail) {
   );
 
   if (isSessionError && typeof window.retriggerSso === 'function') {
-    console.log('[CSM] showError에서 세션 만료 감지 - 자동 재연결 시작');
+    console.log('[CSM] showError에서 세션 만료 감지 - 공유 가드로 재연결');
     el.innerHTML = `<div class="error-title">🔄 ITSM 세션 재연결 중...</div>`;
     showView('error');
 
-    // iframe 재시작 (background 없음)
-    window.retriggerSso((success) => {
+    // 공유 가드 경유 — itsmFetch가 돌리는 폴링과 동일 Promise를 공유해 redirect 중복을 막는다.
+    ensureItsmSession().then((success) => {
       if (success) {
         console.log('[CSM] ✅ 재연결 성공 - 자동 재시도');
-          setTimeout(() => {
-            if (_lastQuery) {
-              doSearchOrCase(_lastQuery);
-            } else {
-              location.reload();
-            }
-          }, 1000);
-        } else {
-          console.error('[CSM] ❌ 재연결 실패');
-          el.innerHTML = `<div class="error-title">⚠️ 재연결 실패</div>`
-            + `<pre class="error-detail">Safari에서 itsm.services.sap를 직접 열어 로그인하세요</pre>`
-            + `<button class="btn-ghost btn-sm" onclick="location.reload()" style="margin-top:8px">다시 시도</button>`;
-        }
+        setTimeout(() => {
+          if (_lastQuery) {
+            doSearchOrCase(_lastQuery);
+          } else {
+            location.reload();
+          }
+        }, 1000);
+      } else {
+        console.error('[CSM] ❌ 재연결 실패');
+        el.innerHTML = `<div class="error-title">⚠️ 재연결 실패</div>`
+          + `<pre class="error-detail">Safari에서 itsm.services.sap를 직접 열어 로그인하세요</pre>`
+          + `<button class="btn-ghost btn-sm" onclick="location.reload()" style="margin-top:8px">다시 시도</button>`;
+      }
     });
     return;
   }
@@ -4307,13 +4314,25 @@ const _viewStack = [];
 const ONE360_HOST = 'one360.for.sap';
 const ONE360_APP_ID = 'a65523c8-ea3d-4cfb-ada1-7aa8c137998b';
 
+// 활성 탭이 이미 one360 또는 SAP SSO IdP 도메인이면 "로그인 진행 중"으로 보고 redirect를 생략한다.
+// (ITSM과 동일 원칙 — 진행 중인 SSO 탭을 다시 redirect하면 로그인이 끊긴다.)
+function isOne360SsoInProgressUrl(url) {
+  if (!url) return false;
+  return /:\/\/(one360\.for\.sap|accounts\.sap\.com|[^/]*\.accounts\.ondemand\.com|[^/]*\.authentication\.[^/]*\.hana\.ondemand\.com)\b/i.test(url);
+}
+
 // one360.for.sap 세션 확보: 현재 Safari 탭을 one360으로 리다이렉트.
 // 탭을 one360으로 보내 SAP SSO 쿠키를 세팅시킨다(대기/판정은 호출부 폴링이 담당 — 고정 시간 대기 안 함).
+// 단, 활성 탭이 이미 one360/IdP라 SSO가 진행 중이면 redirect를 생략한다(진행 중 로그인을 끊지 않음).
 // popup은 활성 탭과 별개 WebView라 리다이렉트해도 이 JS 컨텍스트는 살아있다.
 async function redirectToOne360() {
   try {
     const tabs = await browserAPI.tabs.query({ active: true, currentWindow: true });
     if (tabs.length > 0) {
+      if (isOne360SsoInProgressUrl(tabs[0].url)) {
+        console.log('[CSM] ONE360 SSO 진행 중 감지 - redirect 생략, 폴링만:', (tabs[0].url || '').slice(0, 60));
+        return true;
+      }
       console.log('[CSM] 🔄 ONE360 세션 확보 - Safari를 one360.for.sap으로 리다이렉트');
       await browserAPI.tabs.update(tabs[0].id, { url: 'https://one360.for.sap/' });
       return true;
