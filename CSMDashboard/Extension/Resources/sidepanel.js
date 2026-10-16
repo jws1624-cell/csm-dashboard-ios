@@ -912,7 +912,7 @@ function buildQuery(crmId, days, stateCodes) {
 async function toggleWatch(caseItem, watchBtn) {
   if (!myEmail) {
     await loadMyUser();
-    if (!myEmail) { alert(t('loginError')); return; }
+    if (!myEmail) { showToast(t('loginError'), 'error'); return; }
   }
   const watching = watchBtn.classList.contains('watching');
   const currentList = (caseItem.watch_list || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -934,7 +934,7 @@ async function toggleWatch(caseItem, watchBtn) {
       watchBtn.title = `${t('watchViewing')}: ${newList.join(', ')}`;
     }
   } catch (e) {
-    alert(t('watchUpdateFailed') + ': ' + e.message);
+    showToast(t('watchUpdateFailed') + ': ' + e.message, 'error');
   }
 }
 
@@ -1094,7 +1094,7 @@ function bindFavCaseEvents(list) {
         c._journal = getStr(data.result?.comments_and_work_notes);
         openDetail(c);
       } catch (err) {
-        alert(t('caseFetchFailed') + ': ' + err.message);
+        showToast(t('caseFetchFailed') + ': ' + err.message, 'error');
       } finally {
         el.style.cursor = '';
       }
@@ -1487,7 +1487,7 @@ function renderUnified(accountHits, caseHits, q) {
         const c = normalizeCase(data.result);
         c._journal = getStr(data.result?.comments_and_work_notes);
         openDetail(c);
-      } catch (err) { alert(t('caseFetchFailed') + ': ' + err.message); }
+      } catch (err) { showToast(t('caseFetchFailed') + ': ' + err.message, 'error'); }
       finally { el.style.cursor = ''; }
     });
   });
@@ -3117,7 +3117,7 @@ async function init() {
       try {
         const obj = JSON.parse(ev.target.result);
         const imported = Array.isArray(obj.favourites) ? obj.favourites : (Array.isArray(obj) ? obj : null);
-        if (!imported) { alert(t('favImportInvalid')); return; }
+        if (!imported) { showToast(t('favImportInvalid'), 'error'); return; }
         const merged = [..._favourites];
         let added = 0;
         for (const f of imported) {
@@ -3128,10 +3128,10 @@ async function init() {
         }
         _favourites = merged;
         saveFavourites();
-        alert(`${t('favImportDone')}: ${added}${t('favImportAdded')} ${_favourites.length}${t('favImportTotal')}`);
+        showToast(`${t('favImportDone')}: ${added}${t('favImportAdded')} ${_favourites.length}${t('favImportTotal')}`, 'success');
         if (selectedOwnerKey === 'favourite') renderFavouriteList();
         updateFavouriteBtn();
-      } catch { alert(t('favImportError')); }
+      } catch { showToast(t('favImportError'), 'error'); }
     };
     reader.readAsText(file);
     e.target.value = '';
@@ -3187,11 +3187,11 @@ async function init() {
         setProgress('');
       } catch (e) {
         setProgress('');
-        alert(t('loginError') || '로그인 실패. 페이지를 새로고침하세요.');
+        showToast(t('loginError') || '로그인 실패. 페이지를 새로고침하세요.', 'error');
         return;
       }
       if (!myUserId) {
-        alert(t('loginError') || '세션을 가져올 수 없습니다.');
+        showToast(t('loginError') || '세션을 가져올 수 없습니다.', 'error');
         return;
       }
     }
@@ -3393,7 +3393,7 @@ async function init() {
     } catch (e) {
       btn.disabled = false;
       btn.textContent = t('add');
-      alert(`${t('memoFailed')}: ${e.message}`);
+      showToast(`${t('memoFailed')}: ${e.message}`, 'error');
     }
   };
 
@@ -3431,11 +3431,11 @@ async function init() {
         const data = await r.json();
         if (!r.ok) throw new Error(data.error || r.status);
         overlay.remove();
-        alert('✅ Retrieve Case 완료 — 케이스가 In Progress로 변경되었습니다.');
+        showToast('✅ Retrieve Case 완료 — 케이스가 In Progress로 변경되었습니다.', 'success');
       } catch (e) {
         submitBtn.disabled = false;
         submitBtn.textContent = 'Retrieve';
-        alert('❌ 실패: ' + e.message);
+        showToast('❌ 실패: ' + e.message, 'error');
       }
     };
   };
@@ -3469,7 +3469,7 @@ async function init() {
       try {
         await uploadAttachment(selectedCase.sys_id, files[i]);
       } catch (e) {
-        alert(`${files[i].name} ${t('uploadFailed')}: ${e.message}`);
+        showToast(`${files[i].name} ${t('uploadFailed')}: ${e.message}`, 'error');
       }
     }
     progress.classList.add('hidden');
@@ -3746,7 +3746,7 @@ function openOwnerEditor(idx) {
   document.getElementById('btnOwnerEditorSave').onclick = (e) => {
     e.stopPropagation();
     const name = document.getElementById('ownerNameInput').value.trim();
-    if (!name) { alert('Name is required'); return; }
+    if (!name) { showToast('Name is required', 'info'); return; }
     const key = name.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
     if (isNew) {
       _owners.push({ key, name, ids: owner.ids });
@@ -4236,12 +4236,12 @@ async function navigateToCase(caseNum, notifObj = null) {
         caseObj = normalizeCase(raw);
       } else {
         console.error(`[navigateToCase] ${caseNum} 조회 결과 없음`);
-        alert(`케이스를 찾을 수 없습니다: ${caseNum}`);
+        showToast(`케이스를 찾을 수 없습니다: ${caseNum}`, 'error');
         return;
       }
     } catch (error) {
       console.error('[navigateToCase] ITSM 조회 실패:', error);
-      alert(`케이스 조회 실패: ${error.message}`);
+      showToast(`케이스 조회 실패: ${error.message}`, 'error');
       return;
     }
   }
