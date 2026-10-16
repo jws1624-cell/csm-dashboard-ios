@@ -77,6 +77,30 @@
     SYSTEMS[cfg.key] = cfg;
   }
 
+  // ── 진행상태 리포터 ────────────────────────────────────────────────────
+  // 세션 확보는 Safari 상태(활성 탭/SSO)에 의존해 길게는 90초가 걸린다. 그 사이 확장 popup이
+  // "빈 스켈레톤"으로 멈춘 듯 보이던 문제를 메우려고, 세션 단계를 sidepanel로 쏴 setProgress에 띄운다.
+  // init-session.js와 sidepanel.js는 같은 popup WebView(window 공유)라 runtime.sendMessage 왕복 대신
+  // 직접 콜백이 확실하다. report는 세션 로직에 영향 0이어야 하므로 미등록/예외에도 절대 throw 안 함.
+  // phase: 'probing' | 'redirecting' | 'skip-idp' | 'waiting' | 'done' | 'failed'
+  let _progressReporter = null;
+  function setProgressReporter(fn) { _progressReporter = typeof fn === 'function' ? fn : null; }
+  function phaseToMsgKey(phase) {
+    switch (phase) {
+      case 'probing':     return 'sessionChecking';
+      case 'redirecting': return 'ssoIdp';
+      case 'skip-idp':    return 'ssoIdp';
+      case 'waiting':     return 'itsmReturn';
+      case 'done':        return '';
+      case 'failed':      return '';
+      default:            return '';
+    }
+  }
+  function report(key, phase) {
+    if (!_progressReporter) return;
+    try { _progressReporter(key, phaseToMsgKey(phase), phase); } catch (_) { /* 세션 로직 보호 */ }
+  }
+
   // 전역 확보 체인 — 활성 탭은 Safari에 하나뿐이므로, 두 시스템이 동시에 탭을 뺏으면 핑퐁이 난다.
   // 확보(redirect+폴링)를 이 체인에 "직렬"로 붙여 한 번에 하나의 시스템만 활성 탭을 redirect한다.
   // ITSM 먼저 요청됐으면 ITSM 쿠키를 받은 뒤 ONE360로 넘어감. URL/소유권 판단 불필요.
@@ -152,9 +176,11 @@
     // IdP에서 OAuth 진행 중이면 건드리지 않는다(code invalid 400 방지).
     if (IDP_RE.test(tab.url || '')) {
       console.log('[CSMSession] ' + cfg.key + ': 활성 탭이 IdP(OAuth 진행 중) - redirect 생략, 짧게 대기', (tab.url || '').slice(0, 70));
+      report(cfg.key, 'skip-idp');
       return 'skip-idp';
     }
     try {
+      report(cfg.key, 'redirecting');
       await browserAPI.tabs.update(tab.id, { url: cfg.loginUrl });
       console.log('[CSMSession] ' + cfg.key + ': Safari를 ' + cfg.loginUrl + ' 으로 리다이렉트(SSO 유도)');
     } catch (e) {
@@ -195,6 +221,7 @@
     //      401로 도배되던 문제의 핵심 — 진행 중이면 다시 확인하지 말고 수렴시킨다.
     if (cfg._ssoPromise) return cfg._ssoPromise;
     // 2) 경량 프로브로 현 상태 판정. 동시 진입은 _probePromise로 묶어 probe도 1회만.
+    report(key, 'probing');
     let res;
     try {
       if (!cfg._probePromise) {
@@ -204,7 +231,7 @@
       }
       res = await cfg._probePromise;
     } catch (_) { res = { state: 'invalid' }; }
-    if (res.state === 'valid') return true;
+    if (res.state === 'valid') { report(key, 'done'); return true; }
     // 2.5) 프로브를 기다리는 사이 다른 호출이 확보를 시작했을 수 있다 → 그걸 공유.
     if (cfg._ssoPromise) return cfg._ssoPromise;
     // 3) 세션없음 → 전역 체인에 직렬로 붙여 확보(redirect+폴링). 시스템당 Promise 1개 공유.
@@ -213,12 +240,13 @@
       const run = _acquireChain.then(async () => {
         const r = await acquireRedirect(cfg);
         // redirect를 실제로 건 경우에만 SSO 완료를 길게(90초) 기다린다.
-        if (r === 'redirected') return pollUntilValid(cfg, Date.now() + SESSION_TIMEOUT_MS);
+        if (r === 'redirected') { report(key, 'waiting'); return pollUntilValid(cfg, Date.now() + SESSION_TIMEOUT_MS); }
         // IdP OAuth 진행 중이라 생략한 경우: 곧 끝날 수 있으니 짧게만(15초) 보고 포기.
-        if (r === 'skip-idp')  return pollUntilValid(cfg, Date.now() + IDP_WAIT_MS);
+        if (r === 'skip-idp')  { report(key, 'waiting'); return pollUntilValid(cfg, Date.now() + IDP_WAIT_MS); }
         // 탭없음/실패: redirect를 못 걸었으니 폴링해도 새 쿠키가 안 들어온다 → 즉시 실패.
         return false;
-      });
+      }).then((ok) => { report(key, ok ? 'done' : 'failed'); return ok; },
+              (e) => { report(key, 'failed'); throw e; });
       // 한 시스템 확보 실패가 다음 시스템을 막지 않도록 체인은 항상 이어감.
       _acquireChain = run.then(() => {}, () => {});
       cfg._ssoPromise = run.finally(() => { cfg._ssoPromise = null; });
@@ -243,7 +271,9 @@
   window.CSMSession = {
     registerSystem, ensureSession, getToken,
     SHARED_IDP, makeSsoDomainsRe,
+    setProgressReporter,             // 세션 확보 단계를 sidepanel setProgress로 전달
     _classifyProbe: classifyProbe,   // 테스트/디버깅용
+    _phaseToMsgKey: phaseToMsgKey,
     _SYSTEMS: SYSTEMS,
   };
 

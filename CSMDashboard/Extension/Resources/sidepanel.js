@@ -100,6 +100,7 @@ const STRINGS = {
     ssoStart: 'SSO 인증 중…',
     ssoIdp: 'SAP SSO 인증 중…',
     itsmReturn: 'ITSM 세션 확립 중…',
+    sessionChecking: '세션 확인 중…',
     favImportInvalid: '올바른 Favourite 백업 파일이 아닙니다.',
     favImportDone: '복원 완료',
     favImportAdded: '건 추가됨 (총',
@@ -206,6 +207,7 @@ const STRINGS = {
     ssoStart: 'Starting SSO…',
     ssoIdp: 'SAP SSO authentication…',
     itsmReturn: 'Establishing ITSM session…',
+    sessionChecking: 'Checking session…',
     favImportInvalid: 'Not a valid Favourite backup file.',
     favImportDone: 'Restored',
     favImportAdded: 'added (total',
@@ -312,6 +314,7 @@ const STRINGS = {
     ssoStart: 'SSO 认证中…',
     ssoIdp: 'SAP SSO 认证中…',
     itsmReturn: '正在建立 ITSM 会话…',
+    sessionChecking: '正在检查会话…',
     favImportInvalid: '不是有效的收藏备份文件。',
     favImportDone: '已恢复',
     favImportAdded: '条已添加（共',
@@ -418,6 +421,7 @@ const STRINGS = {
     ssoStart: 'SSO 認証中…',
     ssoIdp: 'SAP SSO 認証中…',
     itsmReturn: 'ITSM セッション確立中…',
+    sessionChecking: 'セッション確認中…',
     favImportInvalid: '有効なお気に入りバックアップファイルではありません。',
     favImportDone: '復元完了',
     favImportAdded: '件追加されました（合計',
@@ -1145,16 +1149,25 @@ async function renderAccountList(crmIds) {
     return true;
   });
 
-  // korea-accounts에 없는 항목은 ITSM customer_account에서 name 조회
-  await Promise.all(items.filter(a => !a.name).map(async a => {
-    try {
-      const path = `/api/now/table/customer_account?sysparm_query=u_sap_crm_bp_number=${encodeURIComponent(a.crmId)}&sysparm_fields=name&sysparm_limit=1&sysparm_exclude_reference_link=true`;
-      const resp = await new Promise((resolve, reject) => {
-        itsmFetch(path).then(resolve).catch(reject);
-      });
-      a.name = resp?.result?.[0]?.name || null;
-    } catch { /* 무시 */ }
-  }));
+  // 담당자 탭의 고객사명은 거의 전부 korea-accounts.json(로컬)에 있다. 그러니
+  // 로컬에서 이름이 나온 항목은 ITSM(세션 필요) 조회를 기다리지 말고 "먼저 그린다".
+  // 사용자가 "담당자/고객사는 JSON에서 바로 가져오는데도 기다린다"고 지적한 그 구간을 없앤다.
+  const missing = items.filter(a => !a.name);
+  // 로컬 이름이 하나라도 있으면 먼저 그려 account 뷰로 전환(즉시 보임). 남은 이름은 아래서 보강.
+  if (items.some(a => a.name)) paintAccountList(items, startKey);
+
+  // korea-accounts에 없는 항목만 ITSM customer_account에서 name 조회(세션 필요)
+  if (missing.length) {
+    await Promise.all(missing.map(async a => {
+      try {
+        const path = `/api/now/table/customer_account?sysparm_query=u_sap_crm_bp_number=${encodeURIComponent(a.crmId)}&sysparm_fields=name&sysparm_limit=1&sysparm_exclude_reference_link=true`;
+        const resp = await new Promise((resolve, reject) => {
+          itsmFetch(path).then(resolve).catch(reject);
+        });
+        a.name = resp?.result?.[0]?.name || null;
+      } catch { /* 무시 */ }
+    }));
+  }
 
   // ⚠️ 렌더링 직전 체크: 탭이 바뀌었으면 중단 (다른 탭의 내용이 덮어쓰는 것 방지)
   if (selectedOwnerKey !== startKey) {
@@ -1162,9 +1175,19 @@ async function renderAccountList(crmIds) {
     return;
   }
 
-  const sorted = items.filter(a => a.name).sort((a, b) => a.name.localeCompare(b.name));
+  setProgress('');
+  // 로컬만으로 이미 전부 그린 경우(missing 0)엔 위에서 끝났다. ITSM 보강이 있었거나
+  // 로컬 이름이 하나도 없어 아직 안 그린 경우에만 최종 렌더.
+  if (missing.length || !items.some(a => a.name)) paintAccountList(items, startKey);
+}
 
+// 계정 리스트 DOM 페인트 — 로컬 즉시 렌더/ITSM 보강 재렌더에서 공유.
+// startKey가 넘어오면 그려지기 직전 탭이 바뀌었는지 재확인(stale 덮어쓰기 방지).
+function paintAccountList(items, startKey) {
+  if (startKey != null && selectedOwnerKey !== startKey) return;
+  const sorted = items.filter(a => a.name).sort((a, b) => a.name.localeCompare(b.name));
   const list = document.getElementById('accountList');
+  if (!list) return;
   if (!sorted.length) {
     list.innerHTML = `<div class="empty-state">${t('noAccounts')}</div>`;
   } else {
@@ -1356,6 +1379,7 @@ function showView(mode) {
 async function searchUnified(q) {
   console.log('[CSM] searchUnified 호출 q=', q);
   showView('loading');
+  setProgress(t('sessionChecking')); // 세션 확보 await 동안 빈 스켈레톤 대신 안내(이후 CSMSession 콜백이 단계별로 덮어씀)
   const stripped = q.replace(/^0+/, '');
   const isNumeric = /^\d+$/.test(q);
 
@@ -1508,6 +1532,7 @@ async function searchCaseDirectly(q) {
   if (/^\d{6,7}$/.test(input)) {
     console.log('[CSM] searchCaseDirectly: 6~7자리 → correlation_display 조회');
     showView('loading');
+    setProgress(t('sessionChecking'));
     const fields = 'sys_id,number,short_description,state,action_status,priority,sys_created_on,assigned_to,account,u_app_component,correlation_display,watch_list,active_escalation';
     let rows = [];
     try {
@@ -1562,6 +1587,7 @@ async function searchCaseDirectly(q) {
     snQuery = `short_descriptionLIKE${encodeURIComponent(input)}`;
   }
   showView('loading');
+  setProgress(t('sessionChecking'));
   try {
     const fields = 'sys_id,number,short_description,state,action_status,priority,sys_created_on,assigned_to,account,u_app_component,correlation_display,watch_list,active_escalation';
     const data = await itsmFetch(
@@ -1590,6 +1616,7 @@ async function searchCaseDirectly(q) {
 async function doSearch(crmIds, overrideAccountName) {
   console.log('[CSM] doSearch 시작 crmIds=', crmIds);
   showView('loading');
+  setProgress(t('sessionChecking')); // 세션 확보+customer_account 선조회 구간을 메움(1654의 itsmFetching 전까지 공백이던 자리)
   document.getElementById('resultCount').textContent = '';
 
   const accounts = await loadKoreaAccounts();
@@ -2983,6 +3010,17 @@ async function init() {
       setProgress(BOOTSTRAP_STEPS[msg.step]());
     }
   });
+
+  // 세션 확보(init-session.js CSMSession) 단계를 진행 바에 직접 표시.
+  // 왜: popup과 같은 window라 runtime.sendMessage 왕복 없이 콜백으로 바로 받는다. 세션 확보는
+  // Safari 상태에 의존해 길게는 90초라, 이 콜백이 없으면 그동안 스켈레톤만 떠서 "멈춘 듯" 보인다.
+  // msgKey가 빈 문자열('done'/'failed')이면 메시지를 지운다. 로딩 뷰가 아닐 땐 조용히 무시(헛 표시 방지).
+  if (window.CSMSession && window.CSMSession.setProgressReporter) {
+    window.CSMSession.setProgressReporter((key, msgKey) => {
+      if (_currentView !== 'loading') return;
+      setProgress(msgKey ? t(msgKey) : '');
+    });
+  }
 
   loadMyUser().catch(() => {});
   loadFavourites();

@@ -302,5 +302,75 @@ async function test(name, fn) { await fn(); pass++; console.log('  ✓', name); 
     assert.deepStrictEqual(order, ['acq:itsm', 'fail:itsm', 'acq:one360', 'ok:one360']);
   });
 
+  // ── 진행상태 리포터 (세션 확보 중 sidepanel에 단계 표시) ──
+  // init-session.js 복제: phase→i18n 메시지키 매핑(순수함수) + setProgressReporter/report 안전성.
+  // 왜: ensureSession 폴링(최대 90초) 동안 확장 popup이 "빈 스켈레톤"으로 보이던 문제를 메우려고,
+  // 세션 단계(probing→redirecting/skip-idp→waiting→done/failed)를 sidepanel setProgress로 쏜다.
+  // 콜백은 세션 로직에 영향 0이어야 하므로 report()는 리포터 미등록/예외에도 절대 throw 안 함.
+  function phaseToMsgKey(phase) {
+    switch (phase) {
+      case 'probing':     return 'sessionChecking'; // 세션 확인 중
+      case 'redirecting': return 'ssoIdp';          // SAP SSO 인증 중(활성 탭 redirect)
+      case 'skip-idp':    return 'ssoIdp';           // 이미 IdP에서 OAuth 진행 중
+      case 'waiting':     return 'itsmReturn';       // SSO 완료 폴링(세션 확립 중)
+      case 'done':        return '';                 // 완료 → 메시지 지움
+      case 'failed':      return '';                 // 실패 → 지움(상위에서 showError)
+      default:            return '';
+    }
+  }
+  // report 복제: 등록된 리포터가 있으면 (key, msgKey)로 호출, 예외는 삼킨다.
+  function makeReport() {
+    let reporter = null;
+    return {
+      setProgressReporter(fn) { reporter = typeof fn === 'function' ? fn : null; },
+      report(key, phase) {
+        if (!reporter) return;
+        try { reporter(key, phaseToMsgKey(phase), phase); } catch (_) { /* 세션 로직 보호 */ }
+      },
+    };
+  }
+
+  console.log('진행상태 리포터 phase→메시지키 매핑:');
+  await test("probing → 'sessionChecking'", () => assert.strictEqual(phaseToMsgKey('probing'), 'sessionChecking'));
+  await test("redirecting → 'ssoIdp'", () => assert.strictEqual(phaseToMsgKey('redirecting'), 'ssoIdp'));
+  await test("skip-idp → 'ssoIdp'", () => assert.strictEqual(phaseToMsgKey('skip-idp'), 'ssoIdp'));
+  await test("waiting → 'itsmReturn'", () => assert.strictEqual(phaseToMsgKey('waiting'), 'itsmReturn'));
+  await test("done → '' (메시지 지움)", () => assert.strictEqual(phaseToMsgKey('done'), ''));
+  await test("failed → '' (메시지 지움)", () => assert.strictEqual(phaseToMsgKey('failed'), ''));
+  await test("미지정 phase → '' (기본 안전)", () => assert.strictEqual(phaseToMsgKey('zzz'), ''));
+
+  console.log('진행상태 리포터 안전성 (세션 로직 비파괴):');
+  await test('리포터 미등록 → report() 호출해도 throw 안 함', () => {
+    const r = makeReport();
+    assert.doesNotThrow(() => r.report('itsm', 'probing'));
+  });
+  await test('리포터가 예외 던져도 report()는 삼킴', () => {
+    const r = makeReport();
+    r.setProgressReporter(() => { throw new Error('boom'); });
+    assert.doesNotThrow(() => r.report('itsm', 'waiting'));
+  });
+  await test('등록된 리포터는 (key, msgKey, phase)로 호출됨', () => {
+    const r = makeReport();
+    const calls = [];
+    r.setProgressReporter((key, msgKey, phase) => calls.push([key, msgKey, phase]));
+    r.report('itsm', 'probing');
+    r.report('itsm', 'waiting');
+    r.report('itsm', 'done');
+    assert.deepStrictEqual(calls, [
+      ['itsm', 'sessionChecking', 'probing'],
+      ['itsm', 'itsmReturn', 'waiting'],
+      ['itsm', '', 'done'],
+    ]);
+  });
+  await test('setProgressReporter(null)로 해제 → 이후 호출 무시', () => {
+    const r = makeReport();
+    let n = 0;
+    r.setProgressReporter(() => n++);
+    r.report('itsm', 'probing');
+    r.setProgressReporter(null);
+    r.report('itsm', 'waiting');
+    assert.strictEqual(n, 1, '해제 후엔 리포터 호출 안 됨');
+  });
+
   console.log(`\n✅ 전체 ${pass}개 테스트 통과`);
 })().catch((e) => { console.error('\n❌ 테스트 실패:', e.message, '\n', e.stack); process.exit(1); });
