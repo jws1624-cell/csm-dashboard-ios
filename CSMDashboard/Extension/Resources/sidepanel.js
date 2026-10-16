@@ -768,49 +768,32 @@ function extractNoteLinks(rawJournal) {
   return out;
 }
 
-// ── ITSM 통신 (background로 위임, 세션 만료 시 자동 재연결) ──────────
-let _reconnecting = null; // 재연결 중인 Promise (중복 재연결 방지)
-
-// ITSM SSO 공유 가드: 여러 itsmFetch 호출(doSearch의 병렬 N개 + 메인 조회)이 동시에
-// 세션 없음을 만나도 retriggerSso를 1회만 돌리고 모두 같은 폴링을 공유한다.
-// ONE360의 _one360Redirected 가드와 동형. retriggerSso 내부가 90초 폴링하므로,
-// 이 Promise 하나를 await하면 "SSO가 진행 중이면 끝날 때까지 함께 대기"가 성립한다.
-// (각 호출이 제각기 retriggerSso를 부르면 활성 탭을 여러 번 redirect해 진행 중 SSO가 끊김)
-let _itsmSsoPromise = null;
-async function ensureItsmSession() {
-  // 이미 세션이 생겼으면(다른 호출이 공유 폴링으로 확보) 재-redirect/폴링 없이 즉시 성공.
-  if (window._gck && Date.now() < window._gckExpiry) return true;
-  if (typeof window.retriggerSso !== 'function') return false;
-  // 진행 중인 폴링이 있으면 그걸 공유. 없을 때만 1개 생성 → retriggerSso(=redirect) 1회로 수렴.
-  if (!_itsmSsoPromise) {
-    _itsmSsoPromise = new Promise((resolve) => window.retriggerSso(resolve))
-      .finally(() => { _itsmSsoPromise = null; });
-  }
-  const ok = await _itsmSsoPromise;
-  // 폴링이 성공으로 끝났으면 window._gck가 채워져 있다. 둘 다 확인해 반환.
-  return ok && !!window._gck && Date.now() < window._gckExpiry;
+// ── ITSM 통신 (통합 SessionManager window.CSMSession 경유) ──────────────
+// 세션 확보/유효성/대기는 전부 window.CSMSession(init-session.js)이 담당한다.
+// itsmFetch는 "토큰 받아서 요청하고, 세션 끊김 신호(401/403/400/405/opaqueredirect)면
+// ensureSession으로 재확보 후 1회 재시도"만 한다.
+function isSessionBreakStatus(response) {
+  // credentials:'include'로 보낸 요청이 세션 없음일 때 나타나는 모든 형태.
+  // 401/403(인증), 400/405(SSO ACS에 GET 착지 "GET not supported" 등), opaqueredirect(로그인 리다이렉트).
+  return response.type === 'opaqueredirect' || response.status === 0
+    || response.status === 400 || response.status === 401
+    || response.status === 403 || response.status === 405;
 }
 
-// background.js 없이 직접 ITSM API 호출
 async function itsmFetch(path, _retried = false) {
   console.log('[CSM] itsmFetch →', path.slice(0, 100), '_retried=', _retried);
 
   const ITSM_BASE = 'https://itsm.services.sap';
 
-  // g_ck 획득
-  if (!window._gck || Date.now() >= window._gckExpiry) {
-    console.log('[CSM] g_ck 없음 또는 만료 - 공유 SSO 가드 대기');
+  // g_ck 획득 — 매니저에 위임.
+  let gck = window.CSMSession.getToken('itsm');
+  if (!gck) {
     if (!_retried) {
-      // ensureItsmSession은 내부에서 최대 90초 폴링을 끝낸 뒤 반환한다(진행 중 SSO면 함께 대기).
-      // true면 window._gck가 이미 채워진 상태 → 재귀 1회로 원래 요청 수행. false일 때만 throw.
-      const ok = await ensureItsmSession();
+      const ok = await window.CSMSession.ensureSession('itsm');
       if (ok) return itsmFetch(path, true);
     }
     throw new Error('ITSM 세션 없음');
   }
-
-  const gck = window._gck;
-  console.log('[CSM] g_ck 사용:', gck.slice(0, 8) + '...');
 
   // PATCH 요청 처리
   const patchIdx = path.indexOf('__PATCH__');
@@ -820,6 +803,7 @@ async function itsmFetch(path, _retried = false) {
     const response = await fetch(ITSM_BASE + apiPath, {
       method: 'PATCH',
       credentials: 'include',
+      redirect: 'manual',
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
@@ -828,11 +812,9 @@ async function itsmFetch(path, _retried = false) {
       body: bodyStr
     });
 
-    if (response.status === 401) {
-      window._gck = null;
-      window._gckExpiry = 0;
+    if (isSessionBreakStatus(response)) {
       if (!_retried) {
-        const ok = await ensureItsmSession();
+        const ok = await window.CSMSession.ensureSession('itsm');
         if (ok) return itsmFetch(path, true);
       }
       throw new Error('ITSM 인증 실패');
@@ -849,19 +831,18 @@ async function itsmFetch(path, _retried = false) {
   // GET 요청
   const response = await fetch(ITSM_BASE + path, {
     credentials: 'include',
+    redirect: 'manual',
     headers: {
       'Accept': 'application/json',
       'X-UserToken': gck
     }
   });
 
-  console.log('[CSM] ITSM 응답:', response.status, response.url.slice(0, 80));
+  console.log('[CSM] ITSM 응답:', response.status, response.type, (response.url || '').slice(0, 80));
 
-  if (response.status === 401) {
-    window._gck = null;
-    window._gckExpiry = 0;
+  if (isSessionBreakStatus(response)) {
     if (!_retried) {
-      const ok = await ensureItsmSession();
+      const ok = await window.CSMSession.ensureSession('itsm');
       if (ok) return itsmFetch(path, true);
     }
     throw new Error('ITSM 인증 실패');
@@ -1783,20 +1764,26 @@ async function applyComponentFilter() {
 function showError(msg, detail) {
   const el = document.getElementById('errorState');
 
-  // 세션 에러 자동 감지 및 재연결
+  // 세션 에러 자동 감지 및 재연결. 400/405/opaqueredirect/HTML/ONE360도 세션 신호로 포함(결함4).
   const isSessionError = detail && (
     detail.includes('ITSM 세션') || detail.includes('g_ck') || detail.includes('401')
+    || detail.includes('403') || detail.includes('400') || detail.includes('405')
     || detail.includes('세션 없음') || detail.includes('로그인') || detail.includes('SSO')
     || detail.includes('Safari에서') || detail.includes('세션 만료') || detail.includes('세션 확보')
+    || detail.includes('GET is not supported') || detail.includes('opaqueredirect')
+    || detail.includes('HTML 응답') || detail.includes('ONE360')
   );
 
-  if (isSessionError && typeof window.retriggerSso === 'function') {
-    console.log('[CSM] showError에서 세션 만료 감지 - 공유 가드로 재연결');
-    el.innerHTML = `<div class="error-title">🔄 ITSM 세션 재연결 중...</div>`;
+  if (isSessionError && window.CSMSession) {
+    // 에러 출처 시스템을 판별 — ONE360 에러면 one360 세션을, 아니면 itsm 세션을 기다린다.
+    const sys = detail.includes('ONE360') ? 'one360' : 'itsm';
+    const sysLabel = sys === 'one360' ? 'ONE360' : 'ITSM';
+    console.log('[CSM] showError 세션 감지 - 재연결 대상:', sys);
+    el.innerHTML = `<div class="error-title">🔄 ${sysLabel} 세션 재연결 중...</div>`;
     showView('error');
 
-    // 공유 가드 경유 — itsmFetch가 돌리는 폴링과 동일 Promise를 공유해 redirect 중복을 막는다.
-    ensureItsmSession().then((success) => {
+    // 통합 매니저 경유 — 조회 경로가 돌리는 폴링과 동일 Promise를 공유해 redirect 중복을 막는다.
+    window.CSMSession.ensureSession(sys).then((success) => {
       if (success) {
         console.log('[CSM] ✅ 재연결 성공 - 자동 재시도');
         setTimeout(() => {
@@ -1808,8 +1795,9 @@ function showError(msg, detail) {
         }, 1000);
       } else {
         console.error('[CSM] ❌ 재연결 실패');
+        const host = sys === 'one360' ? 'one360.for.sap' : 'itsm.services.sap';
         el.innerHTML = `<div class="error-title">⚠️ 재연결 실패</div>`
-          + `<pre class="error-detail">Safari에서 itsm.services.sap를 직접 열어 로그인하세요</pre>`
+          + `<pre class="error-detail">Safari에서 ${host}를 직접 열어 로그인하세요</pre>`
           + `<button class="btn-ghost btn-sm" onclick="location.reload()" style="margin-top:8px">다시 시도</button>`;
       }
     });
@@ -4314,34 +4302,8 @@ const _viewStack = [];
 const ONE360_HOST = 'one360.for.sap';
 const ONE360_APP_ID = 'a65523c8-ea3d-4cfb-ada1-7aa8c137998b';
 
-// 활성 탭이 이미 one360 또는 SAP SSO IdP 도메인이면 "로그인 진행 중"으로 보고 redirect를 생략한다.
-// (ITSM과 동일 원칙 — 진행 중인 SSO 탭을 다시 redirect하면 로그인이 끊긴다.)
-function isOne360SsoInProgressUrl(url) {
-  if (!url) return false;
-  return /:\/\/(one360\.for\.sap|accounts\.sap\.com|[^/]*\.accounts\.ondemand\.com|[^/]*\.authentication\.[^/]*\.hana\.ondemand\.com)\b/i.test(url);
-}
-
-// one360.for.sap 세션 확보: 현재 Safari 탭을 one360으로 리다이렉트.
-// 탭을 one360으로 보내 SAP SSO 쿠키를 세팅시킨다(대기/판정은 호출부 폴링이 담당 — 고정 시간 대기 안 함).
-// 단, 활성 탭이 이미 one360/IdP라 SSO가 진행 중이면 redirect를 생략한다(진행 중 로그인을 끊지 않음).
-// popup은 활성 탭과 별개 WebView라 리다이렉트해도 이 JS 컨텍스트는 살아있다.
-async function redirectToOne360() {
-  try {
-    const tabs = await browserAPI.tabs.query({ active: true, currentWindow: true });
-    if (tabs.length > 0) {
-      if (isOne360SsoInProgressUrl(tabs[0].url)) {
-        console.log('[CSM] ONE360 SSO 진행 중 감지 - redirect 생략, 폴링만:', (tabs[0].url || '').slice(0, 60));
-        return true;
-      }
-      console.log('[CSM] 🔄 ONE360 세션 확보 - Safari를 one360.for.sap으로 리다이렉트');
-      await browserAPI.tabs.update(tabs[0].id, { url: 'https://one360.for.sap/' });
-      return true;
-    }
-  } catch (e) {
-    console.error('[CSM] ONE360 탭 리다이렉트 실패:', e);
-  }
-  return false;
-}
+// ONE360 세션 확보/유효성/대기는 통합 SessionManager(window.CSMSession)가 담당한다.
+// ONE360 config 등록은 one360FilterBlock/one360Params 정의 뒤에서 수행한다(아래 참조).
 
 // ONE360 API 필터 블록 생성 (background 원본과 동일)
 function one360FilterBlock(values) {
@@ -4375,68 +4337,83 @@ function saBucketOf(saKey) {
   return 'OTHER';
 }
 
-// ONE360 세션 확보 polling: 로그인 소요 시간이 가변적이므로 고정 대기 대신
-// "유효성(fetch 성공)"을 1초마다 확인한다. 시간은 timeout 상한으로만 쓴다.
-const ONE360_SESSION_TIMEOUT_MS = 90000; // 로그인(MFA 포함)이 오래 걸려도 견디는 상한
-let _one360Redirected = false;           // 리다이렉트는 세션 미확보 상태당 1회만
+// ── ONE360 config 등록 (통합 SessionManager에 주입) ──────────────────────
+// 세션 확보/유효성/대기는 window.CSMSession이 담당. ONE360는 토큰 없이 쿠키만 쓰므로
+// 유효성 프로브 = 검증된 ACCOUNT datablock의 축소판(CRMAccountID 1컬럼, limit:1, redirect:'manual').
+// ssoDomainsRe에 itsm 도메인을 포함시켜 ITSM 탭/IdP를 뺏지 않게 한다(상호 조정).
+const ONE360_ACCOUNT_DB = 'cc604004-e0ba-427c-828f-4898564b2987';
+window.CSMSession.registerSystem({
+  key: 'one360',
+  loginUrl: 'https://one360.for.sap/',
+  ssoDomainsRe: window.CSMSession.makeSsoDomainsRe(['one360\\.for\\.sap', 'itsm\\.services\\.sap']),
+  needsToken: false,
+  probe: async (cfg) => {
+    const payload = {
+      columns: ['CRMAccountID'],
+      filters: one360FilterBlock([{ column: 'CRMAccountID', values: ['0000000001'] }]),
+      sortSteps: [], parameterValues: one360Params(), offset: 0, limit: 1,
+    };
+    let r;
+    try {
+      r = await fetch(
+        `https://${ONE360_HOST}/api/datablocks/v1/apps/${ONE360_APP_ID}/datablocks/${ONE360_ACCOUNT_DB}/fetch-data?version=453`,
+        {
+          method: 'POST', credentials: 'include', redirect: 'manual',
+          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify(payload),
+        }
+      );
+    } catch (_) { return { state: 'invalid' }; }
+    const state = window.CSMSession._classifyProbe({
+      status: r.status, type: r.type, finalUrl: r.url, ssoDomainsRe: cfg.ssoDomainsRe,
+      contentType: r.headers && r.headers.get ? r.headers.get('content-type') : null,
+    });
+    return { state };
+  },
+});
 
-// datablock fetch 1회. 상태코드/rows를 그대로 돌려줌(판정은 상위 one360Fetch).
+// datablock fetch 1회. 상태코드/Response를 그대로 돌려줌(판정은 상위 one360Fetch).
 async function one360FetchOnce(dbId, payload, host, version) {
   const url = `https://${host}/api/datablocks/v1/apps/${ONE360_APP_ID}/datablocks/${dbId}/fetch-data?version=${version}`;
   const r = await fetch(url, {
     method: 'POST',
     credentials: 'include',
+    redirect: 'manual',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify(payload),
   });
   return r;
 }
 
-// ONE360 datablock fetch (popup 직접 호출). 세션 없음(401/403)이면 one360으로 탭을
-// 리다이렉트해 로그인시키고, 쿠키가 생겨 fetch가 성공할 때까지 1초 간격으로 폴링한다.
-// ONE360엔 g_ck 같은 토큰이 없으므로 "세션 유효" 판정 = fetch가 200을 받는 것.
-// 반환: rows 배열. timeout까지 실패하면 throw.
+// ONE360 datablock fetch (popup 직접 호출). 세션 확보/대기는 CSMSession.ensureSession이 담당.
+// 세션 확보 후 실제 조회 → 그 사이 끊겼으면(401/403/400/405/opaqueredirect) 1회 재확보+재시도.
+// 반환: rows 배열. 세션 확보 실패/HTML 응답이면 throw.
 async function one360Fetch(dbId, payload, host = ONE360_HOST, version = '453') {
+  if (!(await window.CSMSession.ensureSession('one360'))) {
+    throw new Error('ONE360 세션 확보 실패 — Safari에서 one360.for.sap 로그인 상태를 확인하세요.');
+  }
   let r;
   try {
     r = await one360FetchOnce(dbId, payload, host, version);
   } catch (e) {
     throw new Error(`ONE360 네트워크 오류: ${e.message}`);
   }
-
-  if (r.status === 401 || r.status === 403) {
-    // 세션 없음 → 탭을 one360으로 1회 리다이렉트(로그인 유도) 후, 유효성 폴링.
-    if (!_one360Redirected) {
-      _one360Redirected = true;
-      await redirectToOne360();
+  // ensureSession 직후 세션이 끊긴 희박한 경우 1회 재확보 + 재시도.
+  if (r.type === 'opaqueredirect' || r.status === 0
+      || r.status === 400 || r.status === 401 || r.status === 403 || r.status === 405) {
+    if (await window.CSMSession.ensureSession('one360')) {
+      try { r = await one360FetchOnce(dbId, payload, host, version); }
+      catch (e) { throw new Error(`ONE360 네트워크 오류: ${e.message}`); }
     }
-    console.log('[CSM] 🔄 ONE360 세션 대기 - 로그인 완료까지 1초 간격 폴링');
-    const deadline = Date.now() + ONE360_SESSION_TIMEOUT_MS;
-    while (Date.now() < deadline) {
-      await new Promise(res => setTimeout(res, 1000));
-      let rr;
-      try {
-        rr = await one360FetchOnce(dbId, payload, host, version);
-      } catch (_) {
-        continue; // 네트워크 흔들림 → 다음 틱 재시도
-      }
-      if (rr.status === 401 || rr.status === 403) continue; // 아직 로그인 전
-      if (!rr.ok) {
-        const txt = await rr.text().catch(() => '');
-        throw new Error(`ONE360 ${rr.status}: ${txt.slice(0, 200)}`);
-      }
-      _one360Redirected = false; // 세션 확보됨 → 다음 세션 만료 때 다시 리다이렉트 허용
-      const data = await rr.json();
-      return data?.rows || [];
-    }
-    throw new Error('ONE360 세션 확보 실패 — Safari에서 one360.for.sap 로그인 상태를 확인하세요.');
   }
-
   if (!r.ok) {
     const txt = await r.text().catch(() => '');
     throw new Error(`ONE360 ${r.status}: ${txt.slice(0, 200)}`);
   }
-  _one360Redirected = false;
+  const ct = r.headers && r.headers.get ? r.headers.get('content-type') : null;
+  if (ct && /text\/html/i.test(ct)) {
+    throw new Error('ONE360 로그인 필요(HTML 응답)');
+  }
   const data = await r.json();
   return data?.rows || [];
 }

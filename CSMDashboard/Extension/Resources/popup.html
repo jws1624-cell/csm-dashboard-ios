@@ -386,17 +386,5 @@
 
 <script src="chart.min.js"></script>
 <script src="sidepanel.js"></script>
-<script>
-// 디버그: iframe 존재 확인
-setTimeout(() => {
-  const iframe = document.getElementById('sso-iframe');
-  console.log('[DEBUG] popup.html loaded, iframe:', iframe);
-  if (!iframe) {
-    console.error('[DEBUG] ❌ sso-iframe NOT FOUND in DOM!');
-  } else {
-    console.log('[DEBUG] ✅ sso-iframe exists, src:', iframe.src);
-  }
-}, 1000);
-</script>
 </body>
 </html>

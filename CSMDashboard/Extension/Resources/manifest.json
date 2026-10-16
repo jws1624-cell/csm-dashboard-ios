@@ -31,8 +31,6 @@
   },
 
   "web_accessible_resources": [
-    "korea-accounts.json",
-    "sso-iframe.html",
-    "sso-bootstrap.js"
+    "korea-accounts.json"
   ]
 }
