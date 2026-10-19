@@ -39,6 +39,10 @@
   const IDP_WAIT_MS = 15000;        // skip-idp 폴링 상한
   const POLL_INTERVAL_MS = 500;     // 폴링 간격
   const TOKEN_TTL_MS = 15 * 60 * 1000;
+  // ONE360처럼 토큰 없이 쿠키만 쓰는 시스템의 "프로브 성공 TTL"(낙관 캐시).
+  // 진짜 토큰이 아니라 "최근에 valid였다"는 낙관 추정이므로 ITSM(15분)보다 짧게.
+  // 이 구간엔 프로브를 생략하고 바로 조회 → 조회 결과가 세션끊김이면 즉시 폐기(invalidate)+1회 재확보.
+  const PROBE_OK_TTL_MS = 5 * 60 * 1000;
 
   // ── 세션 판정 순수 규칙 ────────────────────────────────────────────────
   // probe 결과를 'valid' | 'invalid' | 'login-redirect' 로 분류. (Node 단위테스트 대상)
@@ -207,15 +211,26 @@
   // ── 유일 진입점 ────────────────────────────────────────────────────────
   function getToken(key) {
     const cfg = SYSTEMS[key];
+    // needsToken 게이트 유지: ONE360의 낙관 캐시 센티넬('probe-ok')이 헤더로 유출되면 안 됨.
     if (!cfg || !cfg.needsToken) return null;
     return (cfg.token.value && Date.now() < cfg.token.expiry) ? cfg.token.value : null;
+  }
+
+  // 세션 캐시 즉시 폐기. 조회가 세션끊김(401 등)을 만났을 때 재확보 직전에 호출.
+  // ITSM이면 g_ck shim도 동기화해 다음 itsmFetch가 캐시를 재사용하지 않게 한다.
+  function invalidate(key) {
+    const cfg = SYSTEMS[key];
+    if (!cfg) return;
+    cfg.token.value = null; cfg.token.expiry = 0;
+    if (key === 'itsm') { window._gck = null; window._gckExpiry = 0; }
   }
 
   async function ensureSession(key) {
     const cfg = SYSTEMS[key];
     if (!cfg) { console.warn('[CSMSession] 미등록 시스템:', key); return false; }
-    // 1) 토큰 캐시 유효(ITSM) → 즉시.
-    if (cfg.needsToken && cfg.token.value && Date.now() < cfg.token.expiry) return true;
+    // 1) 세션 캐시 유효 → 즉시. ITSM은 진짜 g_ck 토큰, ONE360는 프로브 성공 낙관 캐시('probe-ok').
+    //    둘 다 cfg.token{value,expiry}로 대칭 처리(needsToken 게이트는 getToken만 적용).
+    if (cfg.token.value && Date.now() < cfg.token.expiry) return true;
     // 1.5) 이미 확보(redirect+폴링)가 진행 중이면 중복 프로브 없이 그 결과를 기다린다.
     //      확장 로드 시 itsmFetch가 동시 10여 개 들어오면 각자 probe(401)를 찍어 콘솔이
     //      401로 도배되던 문제의 핵심 — 진행 중이면 다시 확인하지 말고 수렴시킨다.
@@ -269,8 +284,9 @@
 
   // ── 공개 API ───────────────────────────────────────────────────────────
   window.CSMSession = {
-    registerSystem, ensureSession, getToken,
+    registerSystem, ensureSession, getToken, invalidate,
     SHARED_IDP, makeSsoDomainsRe,
+    PROBE_OK_TTL_MS,                 // 토큰 없는 시스템(ONE360) 프로브 성공 낙관 캐시 TTL
     setProgressReporter,             // 세션 확보 단계를 sidepanel setProgress로 전달
     _classifyProbe: classifyProbe,   // 테스트/디버깅용
     _phaseToMsgKey: phaseToMsgKey,

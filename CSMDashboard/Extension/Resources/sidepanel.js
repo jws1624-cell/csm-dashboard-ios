@@ -510,6 +510,9 @@ let _accountDetailTab = 'cases'; // 'contract' | 'cacv' | 'consumption' | 'cases
 let _contractAll = null;
 let _cacvAll = null;
 let _consumptionAll = null;
+// CRM→accountId 매핑 캐시 {crmId, account}. Contract/cACV/Consumption 세 탭이 공유해
+// 고객사당 one360GetAccount 조회를 1회로 줄인다. 고객사(crmId) 바뀔 때만 무효화(데이터 캐시와 수명 동일).
+let _accountIdCache = null;
 let _rawCases = [];         // 컴포넌트 필터 적용 전 원본 케이스 — comp 필터 변경 시 클라 재필터용
 let _lastQuery = null;      // 마지막 검색 쿼리 — 재시도용
 let _lastAiInsight = null;  // 마지막 AI 구조화 결과(전체 복사용)
@@ -831,6 +834,8 @@ async function itsmFetch(path, _retried = false) {
 
     if (isSessionBreakStatus(response)) {
       if (!_retried) {
+        // g_ck 캐시가 TTL 내지만 세션이 실제로 끊겼다 → 폐기해야 재확보가 캐시로 거짓 통과하지 않음.
+        window.CSMSession.invalidate('itsm');
         const ok = await window.CSMSession.ensureSession('itsm');
         if (ok) return itsmFetch(path, true);
       }
@@ -859,6 +864,8 @@ async function itsmFetch(path, _retried = false) {
 
   if (isSessionBreakStatus(response)) {
     if (!_retried) {
+      // g_ck 캐시가 TTL 내지만 세션이 실제로 끊겼다 → 폐기해야 재확보가 캐시로 거짓 통과하지 않음.
+      window.CSMSession.invalidate('itsm');
       const ok = await window.CSMSession.ensureSession('itsm');
       if (ok) return itsmFetch(path, true);
     }
@@ -1697,10 +1704,16 @@ async function doSearch(crmIds, overrideAccountName) {
     _selectedAccount = { crmId: finalTargets[0].crmId, name: finalTargets[0].name };
     if (prevCrm !== _selectedAccount.crmId) {
       _contractAll = _cacvAll = _consumptionAll = null;
+      _accountIdCache = null;
+      // 축1 워밍업: 고객사 선택 시 ONE360 세션을 백그라운드로 미리 데운다(await 없이, 실패 무시).
+      // 다음 Contract 탭 클릭 시 프로브 없이 즉시 조회. ITSM은 아래 itsmFetch가 lazy 확립.
+      // _acquireChain 직렬화로 ITSM 뒤에 줄 서므로 활성탭 핑퐁 없음. 축2 캐시가 valid면 네트워크 0.
+      window.CSMSession.ensureSession('one360').catch(() => {});
     }
   } else {
     _selectedAccount = null;
     _contractAll = _cacvAll = _consumptionAll = null;
+    _accountIdCache = null;
   }
   _accountDetailTab = 'cases';
 
@@ -3351,6 +3364,7 @@ async function init() {
     _selectedAccount = null;              // 고객사 컨텍스트 초기화
     _accountDetailTab = 'cases';
     _contractAll = _cacvAll = _consumptionAll = null; // ONE360 캐시 무효화
+    _accountIdCache = null;
     if (selectedOwnerKey === 'favourite') {
       renderFavouriteList();
       return;
@@ -3622,6 +3636,7 @@ function renderOwnerTabs() {
       _selectedAccount = null;
       _accountDetailTab = 'cases';
       _contractAll = _cacvAll = _consumptionAll = null;
+      _accountIdCache = null;
       await renderAccountList(o.ids);
     });
     scrollEl.appendChild(btn);
@@ -3639,6 +3654,7 @@ function renderOwnerTabs() {
       _selectedAccount = null;
       _accountDetailTab = 'cases';
       _contractAll = _cacvAll = _consumptionAll = null;
+      _accountIdCache = null;
       if (selectedOwnerKey === 'favourite') {
         await renderFavouriteList();
       } else {
@@ -4455,6 +4471,10 @@ window.CSMSession.registerSystem({
       status: r.status, type: r.type, finalUrl: r.url, ssoDomainsRe: cfg.ssoDomainsRe,
       contentType: r.headers && r.headers.get ? r.headers.get('content-type') : null,
     });
+    // 프로브 성공 낙관 캐시(ITSM g_ck 캐시와 대칭). valid면 TTL 동안 ensureSession 1단계가 즉시 통과
+    // → 그 구간 ONE360 조회는 프로브를 생략한다. 토큰은 없으므로 센티넬 'probe-ok'로 심음.
+    if (state === 'valid') { cfg.token.value = 'probe-ok'; cfg.token.expiry = Date.now() + window.CSMSession.PROBE_OK_TTL_MS; }
+    else { cfg.token.value = null; cfg.token.expiry = 0; }
     return { state };
   },
 });
@@ -4488,6 +4508,8 @@ async function one360Fetch(dbId, payload, host = ONE360_HOST, version = '453') {
   // ensureSession 직후 세션이 끊긴 희박한 경우 1회 재확보 + 재시도.
   if (r.type === 'opaqueredirect' || r.status === 0
       || r.status === 400 || r.status === 401 || r.status === 403 || r.status === 405) {
+    // 낙관 캐시('probe-ok')가 거짓 통과하지 않도록 재확보 전에 즉시 폐기(안 하면 1단계가 또 통과→무한 재시도).
+    window.CSMSession.invalidate('one360');
     if (await window.CSMSession.ensureSession('one360')) {
       try { r = await one360FetchOnce(dbId, payload, host, version); }
       catch (e) { throw new Error(`ONE360 네트워크 오류: ${e.message}`); }
@@ -4507,6 +4529,11 @@ async function one360Fetch(dbId, payload, host = ONE360_HOST, version = '453') {
 
 // ── ONE360 조회 래퍼 (background 핸들러 로직을 popup으로 이식. 반환 형태 {ok,...} 유지) ──
 async function one360GetAccount(crmId) {
+  // 고객사당 1회: CRM→accountId 매핑은 사실상 불변 → 같은 crmId면 캐시 반환(ONE360 조회 0회).
+  // 세 탭(Contract/cACV/Consumption)이 공유. 고객사 변경 시 _accountIdCache=null로 무효화됨.
+  if (_accountIdCache && _accountIdCache.crmId === crmId) {
+    return { ok: true, account: _accountIdCache.account };
+  }
   const paddedId = String(crmId).replace(/^0+/, '').padStart(10, '0');
   const payload = {
     columns: ['SAPViewTopParent', 'CRMAccountName_title', 'CRMAccountID'],
@@ -4516,7 +4543,9 @@ async function one360GetAccount(crmId) {
   const rows = await one360Fetch('cc604004-e0ba-427c-828f-4898564b2987', payload);
   if (!rows.length) throw new Error(`CRM ${crmId} not found (padded: ${paddedId})`);
   const v = rows[0].values;
-  return { ok: true, account: { accountId: v.CRMAccountID, customerName: v.CRMAccountName_title, guAccountId: v.SAPViewTopParent } };
+  const account = { accountId: v.CRMAccountID, customerName: v.CRMAccountName_title, guAccountId: v.SAPViewTopParent };
+  _accountIdCache = { crmId, account };
+  return { ok: true, account };
 }
 
 async function one360GetContract(accountId) {
