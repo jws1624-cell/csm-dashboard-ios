@@ -734,29 +734,55 @@ function parseJournal(raw) {
 
 // journal HTML 전체에서 KBA/Note me.sap.com/notes 링크 추출 (중복 제거)
 function extractNoteLinks(rawJournal) {
-  const out = [];
-  const seen = new Set();
-  // 1) <a href="...me.sap.com/notes/..."> 링크 태그
-  const reLink = /<a[^>]+href=["']([^"']*me\.sap\.com\/notes\/[^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  const raw = rawJournal || '';
+  const byNum = new Map(); // num(정규화) → { num, title }
+
+  // (B) "번호 - 제목" 평문 매핑. "has been attached - 3037572 - How to switch..." 또는
+  //     단독 "3037572 - 제목". 번호 6~8자리(KBA/Note 범위).
+  //     ⚠️ htmlToText 가 개행을 공백으로 뭉개 저널이 "한 줄"이 되므로 \n 으로 끊을 수 없다.
+  //     → 제목 종료 경계를 명시 토큰(다음 KBA 번호 / Knowledge Article / See also / Also note
+  //       / [code] / 끝)으로 잡고, 그래도 길면 120자로 하드 캡(폭주 방지).
+  const plain = htmlToText(raw);
+  const titleMap = new Map();
+  const TITLE_STOP = '(?=\\s+0*\\d{6,8}\\s*-|\\s+Knowledge Article\\b|\\s+See also\\b|\\s+Also note\\b|\\s*\\[\\/?code\\]|$)';
+  const reTitle = new RegExp(`\\b0*(\\d{6,8})\\b\\s*-\\s*(.+?)${TITLE_STOP}`, 'gi');
+  let tm;
+  while ((tm = reTitle.exec(plain)) !== null) {
+    const num = tm[1].replace(/^0+/, '') || tm[1];
+    const title = tm[2].trim().slice(0, 120).trim();
+    if (title && !/^\d+$/.test(title) && !titleMap.has(num)) titleMap.set(num, title);
+  }
+
+  function add(num) {
+    const n = num.replace(/^0+/, '') || num;
+    if (byNum.has(n)) return;
+    byNum.set(n, { num: n, title: titleMap.get(n) || n });
+  }
+
+  // (A1) me.sap.com/notes anchor 에서 번호 추출.
+  //      anchor 내부 텍스트(</a> 로 경계 확실)가 제목형이면 titleMap(평문)보다 우선 신뢰.
+  const reLink = /<a[^>]+href=["'][^"']*me\.sap\.com\/notes\/0*(\d+)[^"']*["'][^>]*>([\s\S]*?)<\/a>/gi;
   let m;
-  while ((m = reLink.exec(rawJournal || '')) !== null) {
-    const url = m[1];
-    if (seen.has(url)) continue;
-    seen.add(url);
-    const title = htmlToText(m[2]) || url;
-    out.push({ url, title });
-  }
-  // 2) plain text 10자리 숫자 (Note/KBA 번호) — 링크 없는 경우
-  const plain = (rawJournal || '').replace(/<[^>]+>/g, ' '); // strip HTML
-  const reNum = /\b(\d{10})\b/g;
-  while ((m = reNum.exec(plain)) !== null) {
+  while ((m = reLink.exec(raw)) !== null) {
     const num = m[1];
-    const url = `https://me.sap.com/notes/${num}`;
-    if (seen.has(url)) continue;
-    seen.add(url);
-    out.push({ url, title: num });
+    add(num);
+    const inner = htmlToText(m[2]);
+    if (inner && !/^\d+$/.test(inner) && !/^https?:/.test(inner) && !/^KB0/.test(inner)) {
+      const n = num.replace(/^0+/, '') || num;
+      const cleaned = inner.replace(/^0*\d+\s*-\s*/, '').trim().slice(0, 120).trim();
+      if (cleaned) byNum.get(n).title = cleaned; // anchor 제목이 가장 정확 → 덮어씀
+    }
   }
-  return out;
+
+  // (A2) "Knowledge Article ... has been attached - <번호>" 문맥의 번호 (6~8자리)
+  const reKA = /Knowledge Article[\s\S]{0,200}?attached\s*-\s*0*(\d{6,8})\b/gi;
+  while ((m = reKA.exec(plain)) !== null) add(m[1]);
+
+  // url 조립해 반환 (호출부 renderRefs 가 url.match(/\/notes\/(\d+)/) 로 번호 재추출)
+  return [...byNum.values()].map(({ num, title }) => ({
+    url: `https://me.sap.com/notes/${num}`,
+    title,
+  }));
 }
 
 // ── ITSM 통신 (통합 SessionManager window.CSMSession 경유) ──────────────
@@ -2263,30 +2289,50 @@ async function runAiInsight() {
 }
 
 // AI 응답 → {customer_inquiry, current_state, required_action, source_entry, timeline:[{date,summary,actor}]}
+//
+// 2차 방어선(서버 normalizeInsight 와 동일 로직): BTP /api/ai/insight 가 전체 insight 를
+// 한 문자열 필드(주로 current_state, 때로 customer_inquiry)에 JSON.stringify 로 통째로
+// 재래핑해 반환하는 깨짐(1228483/2026)이 있다. 과거엔 그 필드를 "객체로 파싱"만 하고
+// 바깥 필드로 재분배하지 않아, 렌더러가 그 객체를 다시 stringify 해 JSON 덩어리가 노출됐다.
+// → 재래핑된 insight 를 감지해 바깥으로 승격(평탄화). 서버가 또 깨뜨려도 화면이 깨지지 않게.
+const _INSIGHT_STRING_KEYS = ['customer_inquiry', 'current_state', 'required_action'];
+function _looksLikeInsight(o) {
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return false;
+  const keys = ['customer_inquiry', 'current_state', 'required_action', 'timeline', 'source_entry'];
+  return keys.filter(k => k in o).length >= 2; // 평문 오탐 방지: 스키마 키 2개 이상
+}
 function parseAiStructured(insight) {
-  if (insight && typeof insight === 'object') {
-    // 각 필드가 JSON 문자열로 이중 인코딩되어 온 경우 파싱
-    const parse = (val) => {
-      if (typeof val === 'string' && (val.startsWith('{') || val.startsWith('['))) {
-        try { return JSON.parse(val); } catch { return val; }
-      }
-      return val;
-    };
-    return {
-      customer_inquiry: parse(insight.customer_inquiry) || '',
-      current_state: parse(insight.current_state) || '',
-      required_action: parse(insight.required_action) || '',
-      source_entry: (insight.source_entry && insight.source_entry.text) ? insight.source_entry : null,
-      timeline: Array.isArray(insight.timeline) ? insight.timeline : []
-    };
+  // insight 전체가 JSON 문자열이면 객체화, 평문이면 current_state 로.
+  if (typeof insight === 'string') {
+    const s = insight.trim();
+    if (s.startsWith('{')) { try { insight = JSON.parse(s); } catch { insight = {}; } }
+    else return { customer_inquiry: '', current_state: String(insight || ''), required_action: '', source_entry: null, timeline: [] };
   }
-  // 문자열이면 JSON 파싱 시도, 실패 시 전체를 current_state에
-  try {
-    const j = JSON.parse(insight);
-    return parseAiStructured(j);
-  } catch {
-    return { customer_inquiry: '', current_state: String(insight || ''), required_action: '', source_entry: null, timeline: [] };
+  if (!insight || typeof insight !== 'object' || Array.isArray(insight)) insight = {};
+
+  // 문자열 필드가 재래핑된 insight 면 바깥을 그 객체로 교체. 중첩 대비 최대 4회.
+  for (let i = 0; i < 4; i++) {
+    let promoted = false;
+    for (const k of _INSIGHT_STRING_KEYS) {
+      const v = insight[k];
+      if (typeof v !== 'string') continue;
+      const trimmed = v.trim();
+      if (!trimmed.startsWith('{')) continue;
+      let parsed;
+      try { parsed = JSON.parse(trimmed); } catch { continue; }
+      if (_looksLikeInsight(parsed)) { insight = parsed; promoted = true; break; }
+    }
+    if (!promoted) break;
   }
+
+  const str = (x) => (typeof x === 'string' ? x : (x == null ? '' : String(x)));
+  return {
+    customer_inquiry: str(insight.customer_inquiry),
+    current_state: str(insight.current_state),
+    required_action: str(insight.required_action),
+    source_entry: (insight.source_entry && insight.source_entry.text) ? insight.source_entry : null,
+    timeline: Array.isArray(insight.timeline) ? insight.timeline : []
+  };
 }
 
 function renderAiStructured(s, journal) {
@@ -2297,7 +2343,10 @@ function renderAiStructured(s, journal) {
   };
   document.querySelectorAll('#aiStructured .ai-block').forEach(block => {
     const key = block.dataset.key;
-    block.querySelector('.ai-block-body').textContent = map[key] || '—';
+    const value = map[key];
+    // 혹시라도 객체가 남아 오면(재래핑 미복원 등) JSON 원문 노출 대신 보기용으로. parseAiStructured 가 평탄화하므로 평상시엔 문자열.
+    const displayValue = (value && typeof value === 'object') ? JSON.stringify(value, null, 2) : (value || '—');
+    block.querySelector('.ai-block-body').textContent = displayValue;
 
     // current_state 블록은 원문 포함해서 복사
     if (key === 'current_state' && s.source_entry) {
