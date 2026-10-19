@@ -735,56 +735,74 @@ function parseJournal(raw) {
   }));
 }
 
-// journal HTML 전체에서 KBA/Note me.sap.com/notes 링크 추출 (중복 제거)
+// journal HTML 전체에서 KBA/Note 번호 쌍 {noteNum, kbNum} 추출 (중복 제거)
+// ─────────────────────────────────────────────────────────────────────────
+// 왜 문자 파싱을 폐기했나: 저널 평문에서 "번호 - 제목"을 정규식으로 긁던 방식은 제목에
+// 특수문자·괄호·날짜꼬리가 붙으면 경계가 깨져 어떤 KBA는 제목이 뜨고 어떤 건 번호만 떴다.
+// → 제목은 이제 kb_knowledge API(enrichKbaTitles)가 KB번호로 정확 조회한다. 여기서는
+//   표시/링크용 "번호 쌍"만 뽑는다.
+//   - noteNum: SAP Note 번호(0패딩 제거) → me.sap.com/notes/<noteNum> 링크 (고객이 실제 여는 링크)
+//   - kbNum:   같은 [code] 블록에 인접한 KB0######. kb_knowledge 조회 키. 없으면 null.
+// kb_knowledge 테이블엔 Note번호 필드가 없어 KB번호로만 정확 조회 가능. 둘은 저널에서 인접하므로 쌍으로 묶는다.
 function extractNoteLinks(rawJournal) {
   const raw = rawJournal || '';
-  const byNum = new Map(); // num(정규화) → { num, title }
+  const byNum = new Map(); // noteNum(정규화) → { noteNum, kbNum }
 
-  // (B) "번호 - 제목" 평문 매핑. "has been attached - 3037572 - How to switch..." 또는
-  //     단독 "3037572 - 제목". 번호 6~8자리(KBA/Note 범위).
-  //     ⚠️ htmlToText 가 개행을 공백으로 뭉개 저널이 "한 줄"이 되므로 \n 으로 끊을 수 없다.
-  //     → 제목 종료 경계를 명시 토큰(다음 KBA 번호 / Knowledge Article / See also / Also note
-  //       / [code] / 끝)으로 잡고, 그래도 길면 120자로 하드 캡(폭주 방지).
-  const plain = htmlToText(raw);
-  const titleMap = new Map();
-  const TITLE_STOP = '(?=\\s+0*\\d{6,8}\\s*-|\\s+Knowledge Article\\b|\\s+See also\\b|\\s+Also note\\b|\\s*\\[\\/?code\\]|$)';
-  const reTitle = new RegExp(`\\b0*(\\d{6,8})\\b\\s*-\\s*(.+?)${TITLE_STOP}`, 'gi');
-  let tm;
-  while ((tm = reTitle.exec(plain)) !== null) {
-    const num = tm[1].replace(/^0+/, '') || tm[1];
-    const title = tm[2].trim().slice(0, 120).trim();
-    if (title && !/^\d+$/.test(title) && !titleMap.has(num)) titleMap.set(num, title);
-  }
-
-  function add(num) {
-    const n = num.replace(/^0+/, '') || num;
-    if (byNum.has(n)) return;
-    byNum.set(n, { num: n, title: titleMap.get(n) || n });
-  }
-
-  // (A1) me.sap.com/notes anchor 에서 번호 추출.
-  //      anchor 내부 텍스트(</a> 로 경계 확실)가 제목형이면 titleMap(평문)보다 우선 신뢰.
-  const reLink = /<a[^>]+href=["'][^"']*me\.sap\.com\/notes\/0*(\d+)[^"']*["'][^>]*>([\s\S]*?)<\/a>/gi;
-  let m;
-  while ((m = reLink.exec(raw)) !== null) {
-    const num = m[1];
-    add(num);
-    const inner = htmlToText(m[2]);
-    if (inner && !/^\d+$/.test(inner) && !/^https?:/.test(inner) && !/^KB0/.test(inner)) {
-      const n = num.replace(/^0+/, '') || num;
-      const cleaned = inner.replace(/^0*\d+\s*-\s*/, '').trim().slice(0, 120).trim();
-      if (cleaned) byNum.get(n).title = cleaned; // anchor 제목이 가장 정확 → 덮어씀
+  function add(num, kbNum) {
+    const n = String(num).replace(/^0+/, '') || String(num);
+    const existing = byNum.get(n);
+    if (existing) {
+      if (kbNum && !existing.kbNum) existing.kbNum = kbNum; // kbNum 보충(먼저 찾은 것 유지)
+      return;
     }
+    byNum.set(n, { noteNum: n, kbNum: kbNum || null });
   }
 
-  // (A2) "Knowledge Article ... has been attached - <번호>" 문맥의 번호 (6~8자리)
-  const reKA = /Knowledge Article[\s\S]{0,200}?attached\s*-\s*0*(\d{6,8})\b/gi;
-  while ((m = reKA.exec(plain)) !== null) add(m[1]);
+  // (쌍) redirector [code] 블록: number":"000NNNNNNN" ... >KBxxxxxxx</a> ... attached - N
+  //      redirector의 0패딩 번호와 "attached - N"은 같은 Note. KB번호는 그 사이 anchor inner.
+  //      번호 6~8자리 제약으로 garbage(임의 10자리 주문/구독ID) 차단 유지.
+  const reRedir =
+    /number["']?\s*:\s*["']0*(\d{6,8})["'][\s\S]{0,200}?>(KB\d{6,})<\/a>[\s\S]{0,80}?attached\s*-\s*0*(\d{6,8})/gi;
+  let m;
+  while ((m = reRedir.exec(raw)) !== null) add(m[3] || m[1], m[2]);
 
-  // url 조립해 반환 (호출부 renderRefs 가 url.match(/\/notes\/(\d+)/) 로 번호 재추출)
-  return [...byNum.values()].map(({ num, title }) => ({
-    url: `https://me.sap.com/notes/${num}`,
-    title,
+  // (A1) me.sap.com/notes anchor 번호 (번호만, 제목 아님). noteNum의 권위 소스.
+  const reLink = /<a[^>]+href=["'][^"']*me\.sap\.com\/notes\/0*(\d+)[^"']*["'][^>]*>[\s\S]*?<\/a>/gi;
+  while ((m = reLink.exec(raw)) !== null) add(m[1], null);
+
+  // (A2) "Knowledge Article ... attached - <번호>" 문맥의 번호 (쌍에서 놓친 것 보강, 6~8자리)
+  const plain = htmlToText(raw);
+  const reKA = /Knowledge Article[\s\S]{0,200}?attached\s*-\s*0*(\d{6,8})\b/gi;
+  while ((m = reKA.exec(plain)) !== null) add(m[1], null);
+
+  return [...byNum.values()];
+}
+
+// KB번호 → 제목(short_description) 세션 캐시. 실패(null)도 캐시해 재조회 난사 방지.
+// title === undefined 가 "아직 조회 안 함" 센티넬.
+const _kbTitleCache = new Map();
+
+// KBA 제목을 kb_knowledge 테이블로 비동기 보충 (best-effort, KBA 섹션은 이미 번호로 렌더됨).
+// kbNum 있는 것만 number=<KB>로 정확 조회 → .ref-row[data-note=<noteNum>] 링크 텍스트만 "번호 - 제목"으로 갱신.
+// 링크 href(me.sap.com/notes/<noteNum>)는 절대 안 건드린다(고객이 여는 링크는 Note번호여야 함).
+// itsmFetch가 세션(g_ck/재인증)을 자체 관리하므로 여기선 그냥 호출만 한다.
+async function enrichKbaTitles(kbaRefs, caseSysId) {
+  await Promise.all(kbaRefs.map(async (r) => {
+    try {
+      let title = _kbTitleCache.get(r.kbNum);
+      if (title === undefined) {
+        const data = await itsmFetch(
+          `/api/now/table/kb_knowledge?sysparm_query=number=${encodeURIComponent(r.kbNum)}&sysparm_fields=number,short_description&sysparm_limit=1`
+        );
+        title = ((data && data.result && data.result[0] && data.result[0].short_description) || '').trim() || null;
+        _kbTitleCache.set(r.kbNum, title);
+      }
+      if (!title) return;                                 // 조회 실패/빈 제목 → 번호만 유지
+      if (!selectedCase || selectedCase.sys_id !== caseSysId) return; // 케이스 전환됨 → 반영 안 함(stale 가드)
+      const box = document.getElementById('detailRefs');
+      const link = box && box.querySelector(`.ref-row[data-note="${CSS.escape(r.noteNum)}"] .ref-link`);
+      if (link) link.textContent = `${r.noteNum} - ${title}`; // href 불변, 표시 텍스트만
+    } catch (_) { /* best-effort: 조용히 번호만 유지 */ }
   }));
 }
 
@@ -2065,19 +2083,16 @@ function renderRefs(c, rawJournal, correctionInfo) {
     });
   }
 
-  // KBA / SAP Note — journal 본문의 me.sap.com/notes 링크 추출
+  // KBA / SAP Note — journal 본문에서 {noteNum, kbNum} 쌍 추출.
+  // 즉시: 번호만으로 렌더(ITSM 느리거나 실패해도 KBA 섹션 안 막힘). 제목은 아래 enrichKbaTitles가 보충.
   extractNoteLinks(rawJournal).forEach(n => {
-    const noteNum = n.url.match(/\/notes\/(\d+)/)?.[1] || '';
-    const noteNumTrimmed = noteNum.replace(/^0+/, '') || noteNum;
-    const titleIsUrl = n.title === n.url || n.title.startsWith('http');
-    const titleIsNum = /^\d+$/.test(n.title.trim());
-    let display;
-    if (titleIsUrl || titleIsNum) {
-      display = noteNumTrimmed;
-    } else {
-      display = `${noteNumTrimmed} - ${n.title.replace(/^\d+ - /, '').trim()}`;
-    }
-    refs.push({ label: t('kbaLabel'), title: display, url: n.url });
+    refs.push({
+      label: t('kbaLabel'),
+      title: n.noteNum,                              // 즉시: 번호만
+      url: `https://me.sap.com/notes/${n.noteNum}`,  // 링크는 Note번호 유지(고객이 여는 링크)
+      noteNum: n.noteNum,
+      kbNum: n.kbNum || null,
+    });
   });
 
   // Jira — journal + u_info_from_correction 에서 PROJECT-1234 형태 추출
@@ -2098,7 +2113,7 @@ function renderRefs(c, rawJournal, correctionInfo) {
 
   const box = document.getElementById('detailRefs');
   box.innerHTML = refs.map((r, i) => `
-    <div class="ref-row" data-i="${i}">
+    <div class="ref-row" data-i="${i}"${r.noteNum ? ` data-note="${escHtml(r.noteNum)}"` : ''}>
       <span class="ref-label"${r.desc ? ` title="${escHtml(r.desc)}"` : ''}>${escHtml(r.label)}</span>
       <a class="ref-link" href="${escHtml(r.url)}" target="_blank" title="${escHtml(r.url)}">${escHtml(r.title)}</a>
       <button class="copy-btn ref-copy" title="${t('copyLink')}"><svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M11 2H5a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V3a1 1 0 0 0-1-1zM5 1h6a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2z"/><path d="M3 4H2a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-1H8v1H2V5h1V4z"/></svg></button>
@@ -2107,6 +2122,10 @@ function renderRefs(c, rawJournal, correctionInfo) {
   box.querySelectorAll('.ref-row').forEach((row, i) => {
     attachCopy(row.querySelector('.ref-copy'), () => refs[i].url);
   });
+
+  // 제목 비동기 보충: kbNum 있는 KBA만 kb_knowledge 조회(최대 8개). stale 가드로 현재 케이스에만 반영.
+  const kbaRefs = refs.filter(r => r.kbNum).slice(0, 8);
+  if (kbaRefs.length) enrichKbaTitles(kbaRefs, selectedCase && selectedCase.sys_id);
 }
 
 // ── AI 타임라인 렌더 ──────────────────────────────────────────────────
