@@ -1,5 +1,5 @@
 {
-  "manifest_version": 2,
+  "manifest_version": 3,
   "name": "CSM Case Dashboard",
   "version": "2.4.0",
   "description": "SAP CSM Team — ITSM + ONE360 Dashboard with AI Insight",
@@ -7,14 +7,21 @@
   "permissions": [
     "tabs",
     "cookies",
-    "storage",
+    "storage"
+  ],
+
+  "host_permissions": [
     "https://itsm.services.sap/*",
     "https://*.hana.ondemand.com/*",
     "https://one360.for.sap/*"
   ],
 
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
 
-  "browser_action": {
+  "action": {
     "default_title": "CSM Case Dashboard",
     "default_icon": {
       "16": "images/icon-16.png",
@@ -31,6 +38,15 @@
   },
 
   "web_accessible_resources": [
-    "korea-accounts.json"
-  ]
+    {
+      "resources": ["korea-accounts.json"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+
+  "browser_specific_settings": {
+    "safari": {
+      "strict_min_version": "15.0"
+    }
+  }
 }
