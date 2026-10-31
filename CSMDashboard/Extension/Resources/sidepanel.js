@@ -1381,10 +1381,10 @@ function applyDetailTabVisibility() {
   set('contractTab', hasAccount && tab === 'contract');
   set('cacvTab', hasAccount && tab === 'cacv');
   set('consumptionTab', hasAccount && tab === 'consumption');
-  // caseList는 고객 선택 + Cases 탭일 때만. account/loading/empty/error 뷰에선
-  // showView가 caseList를 직접 숨기므로 여기선 cases 탭 조건만 본다.
+  // caseList는 Cases 탭일 때 또는 직접 케이스 검색 시(_currentView === 'cases') 표시
+  // account/loading/empty/error 뷰에선 showView가 caseList를 직접 숨기므로 여기선 cases 탭 조건만 본다.
   const inListMode = _currentView === 'account' || _currentView === 'loading' || _currentView === 'empty' || _currentView === 'error';
-  set('caseList', hasAccount && tab === 'cases' && !inListMode);
+  set('caseList', (tab === 'cases' || _currentView === 'cases') && !inListMode);
 
   // ONE360 탭에선 "케이스가 없습니다" emptyState를 강제로 숨긴다.
   if (hasAccount && tab !== 'cases') set('emptyState', false);
@@ -1587,18 +1587,22 @@ async function searchCaseDirectly(q) {
     const fields = 'sys_id,number,short_description,state,action_status,priority,sys_created_on,assigned_to,account,u_app_component,correlation_display,watch_list,active_escalation';
     let rows = [];
     try {
-      // 2026 먼저 시도
+      // 2026 먼저 시도 (정렬 추가 + limit 증가 — ITSM ACL 대응)
       const data2026 = await itsmFetch(
-        `/api/now/table/sn_customerservice_case?sysparm_query=correlation_display=${encodeURIComponent(input + '/2026')}&sysparm_fields=${fields}&sysparm_display_value=true&sysparm_limit=20`
+        `/api/now/table/sn_customerservice_case?sysparm_query=correlation_display=${encodeURIComponent(input + '/2026')}^ORDERBYDESCsys_created_on&sysparm_fields=${fields}&sysparm_display_value=true&sysparm_limit=100`
       );
+      console.log('[CSM] 6~7자리 2026 응답:', data2026);
       rows = Array.isArray(data2026?.result) ? data2026.result : [];
+      console.log('[CSM] 2026 rows 길이:', rows.length);
 
-      // 없으면 2025 시도
+      // 없으면 2025 시도 (정렬 추가 + limit 증가)
       if (!rows.length) {
         const data2025 = await itsmFetch(
-          `/api/now/table/sn_customerservice_case?sysparm_query=correlation_display=${encodeURIComponent(input + '/2025')}&sysparm_fields=${fields}&sysparm_display_value=true&sysparm_limit=20`
+          `/api/now/table/sn_customerservice_case?sysparm_query=correlation_display=${encodeURIComponent(input + '/2025')}^ORDERBYDESCsys_created_on&sysparm_fields=${fields}&sysparm_display_value=true&sysparm_limit=100`
         );
+        console.log('[CSM] 6~7자리 2025 응답:', data2025);
         rows = Array.isArray(data2025?.result) ? data2025.result : [];
+        console.log('[CSM] 2025 rows 길이:', rows.length);
       }
 
       if (!rows.length) {
@@ -1622,29 +1626,37 @@ async function searchCaseDirectly(q) {
   }
 
   let snQuery;
+  let queryLimit = 20; // 기본값
   if (/^CS/i.test(input)) {
-    snQuery = `number=${encodeURIComponent(input.toUpperCase())}`;
+    snQuery = `number=${encodeURIComponent(input.toUpperCase())}^ORDERBYDESCsys_created_on`;
+    queryLimit = 100; // CS 번호 exact 조회는 limit 증가 (ITSM ACL 대응)
   } else if (/^\d{14,}$/.test(input)) {
     // CS 없는 14자리 이상 순수숫자 → CS 붙여서 exact 조회
-    snQuery = `number=CS${encodeURIComponent(input)}`;
+    snQuery = `number=CS${encodeURIComponent(input)}^ORDERBYDESCsys_created_on`;
+    queryLimit = 100; // CS 번호 exact 조회는 limit 증가 (ITSM ACL 대응)
   } else if (/^\d+\/\d{4}$/.test(input)) {
     // 연도형(1209589/2026, 01209589/2026) → correlation_display 조회
-    snQuery = `correlation_display=${encodeURIComponent(input)}`;
+    snQuery = `correlation_display=${encodeURIComponent(input)}^ORDERBYDESCsys_created_on`;
+    queryLimit = 100; // correlation_display exact 조회도 limit 증가
   } else if (/^\d/.test(input)) {
     // 그 외 숫자 → numberLIKE (부분 번호)
-    snQuery = `numberLIKE${encodeURIComponent(input)}`;
+    snQuery = `numberLIKE${encodeURIComponent(input)}^ORDERBYDESCsys_created_on`;
   } else {
     // 텍스트 키워드 → short_description LIKE
-    snQuery = `short_descriptionLIKE${encodeURIComponent(input)}`;
+    snQuery = `short_descriptionLIKE${encodeURIComponent(input)}^ORDERBYDESCsys_created_on`;
   }
   showView('loading');
   setProgress(t('sessionChecking'));
   try {
     const fields = 'sys_id,number,short_description,state,action_status,priority,sys_created_on,assigned_to,account,u_app_component,correlation_display,watch_list,active_escalation';
     const data = await itsmFetch(
-      `/api/now/table/sn_customerservice_case?sysparm_query=${snQuery}&sysparm_fields=${fields}&sysparm_display_value=true&sysparm_limit=20`
+      `/api/now/table/sn_customerservice_case?sysparm_query=${snQuery}&sysparm_fields=${fields}&sysparm_display_value=true&sysparm_limit=${queryLimit}`
     );
+    console.log('[CSM] searchCaseDirectly 응답:', data);
+    console.log('[CSM] result 타입:', typeof data?.result, 'Array.isArray:', Array.isArray(data?.result));
+    console.log('[CSM] result 길이:', data?.result?.length);
     const rows = Array.isArray(data?.result) ? data.result : [];
+    console.log('[CSM] rows 길이:', rows.length);
     if (!rows.length) {
       document.getElementById('emptyState').textContent = `${t('searchNoResult')}: ${input}`;
       showView('empty');
