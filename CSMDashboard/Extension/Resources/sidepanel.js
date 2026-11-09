@@ -77,7 +77,7 @@ const STRINGS = {
     mccSuccess: 'MCC Escalation 제출 완료', mccFailed: '제출 실패',
     mccUnknownError: '알 수 없는 오류',
     watchMe: '나', tlViewFull: '전체 원문은 ServiceNow에서 보기 →',
-    sourceEntryLabel: '최근 회신 원문',
+    sourceEntryLabel: '최근 업데이트',
     watchAdding2: '추가 중…', watchFailed: '검색 실패',
     favEmpty: '즐겨찾기가 없습니다.', favEmptyHint: '고객사 또는 케이스의 ⭐ 버튼을 눌러 추가하세요.',
     favSectionAccount: '고객사', favSectionCase: '케이스',
@@ -184,7 +184,7 @@ const STRINGS = {
     mccSuccess: 'MCC Escalation submitted', mccFailed: 'Submit failed',
     mccUnknownError: 'Unknown error',
     watchMe: 'Me', tlViewFull: 'View full log in ServiceNow →',
-    sourceEntryLabel: 'Latest entry (raw)',
+    sourceEntryLabel: 'Latest update',
     watchAdding2: 'Adding…', watchFailed: 'Search failed',
     favEmpty: 'No favourites yet.', favEmptyHint: 'Press ⭐ on an account or case to add.',
     favSectionAccount: 'Accounts', favSectionCase: 'Cases',
@@ -291,7 +291,7 @@ const STRINGS = {
     mccSuccess: 'MCC Escalation 提交完成', mccFailed: '提交失败',
     mccUnknownError: '未知错误',
     watchMe: '我', tlViewFull: '在 ServiceNow 中查看完整记录 →',
-    sourceEntryLabel: '最新条目（原文）',
+    sourceEntryLabel: '最新更新',
     watchAdding2: '添加中…', watchFailed: '搜索失败',
     favEmpty: '暂无收藏。', favEmptyHint: '点击客户或案例上的 ⭐ 按钮添加。',
     favSectionAccount: '客户', favSectionCase: '案例',
@@ -398,7 +398,7 @@ const STRINGS = {
     mccSuccess: 'MCC Escalation 送信完了', mccFailed: '送信失敗',
     mccUnknownError: '不明なエラー',
     watchMe: '自分', tlViewFull: 'ServiceNow で全文を見る →',
-    sourceEntryLabel: '最新エントリ（原文）',
+    sourceEntryLabel: '最新の更新',
     watchAdding2: '追加中…', watchFailed: '検索失敗',
     favEmpty: 'お気に入りがありません。', favEmptyHint: '顧客またはケースの ⭐ を押して追加してください。',
     favSectionAccount: '顧客', favSectionCase: 'ケース',
@@ -733,6 +733,64 @@ function parseJournal(raw) {
     html: e.bodyLines.join('\n'),
     text: htmlToText(e.bodyLines.join('\n'))
   }));
+}
+
+// ── "의미있는 업데이트" 판별 (범용 — 사람 이름/고객사/ESC번호 하드코딩 금지) ──
+// ServiceNow 저널엔 사람 코멘트와 시스템 자동 생성 노이즈("Escalation ESC... has updated:",
+//   자동 우선순위 변경, KBA/첨부/Code Correction 알림, 케이스 생성 통합라인 등)가 섞인다.
+//   저널 최신 1건을 그대로 "원문"에 쓰면 그 최신이 노이즈일 때 의미없는 라인이 노출된다.
+// 설계: "의미있음"을 사람 이름 화이트리스트로 정의하지 않는다. "노이즈(자동 생성 패턴)"만 블랙리스트로
+//   잡고 노이즈가 아니면 전부 의미있음. 판별 = 텍스트 패턴 + 시스템 저자 계정.
+//   (CF itsm-watchlist-gmail/itsm-mail-lib.js, Chrome csm-dashboard-ext 와 동일 규칙 — 전부 일관.)
+const NOISE_TEXT_PATTERNS = [
+  /\bEscalation\s+ESC\d+\s+has\s+(updated|been\s+closed|been\s+created)/i,
+  /\bEscalation\s+ESC\d+\s+has\b/i,
+  /^(De-)?Escalation\s+justification\s*:/i,
+  /\bhas\s+approved\s+escalation\b/i,
+  /\bhas\s+requested\s+to\s+escalate\s+this\s+Case\b/i,
+  /\bPriority\s+updated\s+to\s*:/i,
+  /\bBusiness\s+Impact\s+updated\s+to\s*:/i,
+  /\bThe\s+priority\s+of\s+your\s+case\s+was\s+raised\b/i,
+  /\bYou\s+will\s+receive\s+an\s+update\s+about\s+this\s+incident\b/i,
+  /\bautomatically\s+generated\s+update\b/i,
+  /\bautomatically\s+rerouted\b/i,
+  /\bsystem-generated\b/i,
+  /\bBot\s+on\s+behalf\s+of\b/i,
+  /\bKnowledge\s+Article\b.*\bhas\s+been\s+attached\b/i,
+  /^Attached\s+Result\b/i,
+  /^Attachment\s+uploaded\b/i,
+  /\bCode\s+Correction\b.*\bhas\s+been\s+(updated|created)\b/i,
+  /\bCode\s+Correction\s+record\b.*\bhas\s+been\s+created\b/i,
+  /\bCase\s+has\s+been\s+created\s+and\s+System\s+Access\s+Required\b/i,
+];
+const NOISE_AUTHOR_PATTERNS = [
+  /^System$/i,
+  /ServiceNow\s+Integration\s+User/i,
+  /\bINT_LP_SN\b/i,
+];
+function isNoiseEntry(entry) {
+  if (!entry) return true;
+  const text = String(entry.text == null ? '' : entry.text).trim();
+  if (!text) return true;
+  const author = String(entry.author == null ? '' : entry.author).trim();
+  for (const re of NOISE_AUTHOR_PATTERNS) { if (re.test(author)) return true; }
+  for (const re of NOISE_TEXT_PATTERNS) { if (re.test(text)) return true; }
+  return false;
+}
+
+// "원문" 박스에 쓸 엔트리를 결정적으로 고른다.
+// parseJournal 은 newest-first. 저널 최신이 시스템 자동 노이즈(Escalation 업데이트 등)면 건너뛰고
+//   "노이즈 제외 후 최신 의미있는 항목"을 고른다(범용, 이름 무관). 서버 AI(source_entry)는 "내용 풍부한"
+//   과거 항목을 집는 경향이 있어 신뢰하지 않고, 의미있는 항목이 하나도 없거나 파싱 실패 시에만 fallback 사용.
+function pickSourceEntry(journal, fallback) {
+  try {
+    const entries = journal ? parseJournal(journal) : [];
+    for (const e of entries) {
+      if (!isNoiseEntry(e) && (e.text || e.time)) return e;
+    }
+    if (entries.length && (entries[0].text || entries[0].time)) return entries[0];
+  } catch (_) { /* noop */ }
+  return (fallback && (fallback.text || fallback.time)) ? fallback : null;
 }
 
 // journal HTML 전체에서 KBA/Note 번호 쌍 {noteNum, kbNum} 추출 (중복 제거)
@@ -2385,6 +2443,9 @@ function renderAiStructured(s, journal) {
     current_state: s.current_state,
     required_action: s.required_action
   };
+
+  // "원문" 박스는 AI가 고른 source_entry 가 아니라 저널 최신 1건으로 결정적 고정. (pickSourceEntry 참고)
+  const sourceEntry = pickSourceEntry(journal, s.source_entry);
   document.querySelectorAll('#aiStructured .ai-block').forEach(block => {
     const key = block.dataset.key;
     const value = map[key];
@@ -2393,20 +2454,20 @@ function renderAiStructured(s, journal) {
     block.querySelector('.ai-block-body').textContent = displayValue;
 
     // current_state 블록은 원문 포함해서 복사
-    if (key === 'current_state' && s.source_entry) {
+    if (key === 'current_state' && sourceEntry) {
       attachCopy(block.querySelector('.copy-btn'), () => {
-        const rawText = `${s.source_entry.time} — ${s.source_entry.author} (${s.source_entry.type})\n${s.source_entry.text}`;
-        return `${map[key] || ''}\n\n[원문]\n${rawText}`;
+        const rawText = `${sourceEntry.time} — ${sourceEntry.author} (${sourceEntry.type})\n${sourceEntry.text}`;
+        return `${map[key] || ''}\n\n[${t('sourceEntryLabel')}]\n${rawText}`;
       });
     } else {
       attachCopy(block.querySelector('.copy-btn'), () => map[key] || '');
     }
   });
 
-  // 최근 journal 원문 (current_state 블록 하단) — AI가 current_state 근거로 사용한 항목
+  // 최근 journal 원문 (current_state 블록 하단) — 저널 최신 1건(결정적). 폴백: AI source_entry.
   const rawEl = document.getElementById('aiLatestRaw');
   const rawText = document.getElementById('aiLatestRawText');
-  const latest = s.source_entry;
+  const latest = sourceEntry;
   if (latest) {
     rawText.textContent = `${latest.time} — ${latest.author} (${latest.type})\n${latest.text}`;
     rawEl.classList.remove('hidden');
@@ -2441,7 +2502,7 @@ function copyAiFull(s) {
     const rows = s.timeline.map(e => `<li><strong>${h(e.date||'')}</strong> (${h(e.actor||'')}) — ${h(e.summary||'')}</li>`).join('');
     html += `<p><strong>${t('copyTimeline2')}</strong><br><ul>${rows}</ul></p>`;
   }
-  const latestEntry = s.source_entry;
+  const latestEntry = pickSourceEntry(c?._journal, s.source_entry);
   if (latestEntry) {
     html += `<p><strong>[${t('sourceEntryLabel')}]</strong><br><em>${nl2br(`${latestEntry.time} — ${latestEntry.author} (${latestEntry.type})\n${latestEntry.text}`)}</em></p>`;
   }
@@ -2489,7 +2550,7 @@ function aiFullText(s) {
       .join('\n');
     parts.push(`${t('copyTimeline2')}\n${tl}`);
   }
-  const latestEntry = s.source_entry;
+  const latestEntry = pickSourceEntry(c?._journal, s.source_entry);
   if (latestEntry) {
     parts.push(`[${t('sourceEntryLabel')}]\n${latestEntry.time} — ${latestEntry.author} (${latestEntry.type})\n${latestEntry.text}`);
   }
