@@ -3446,7 +3446,16 @@ async function init() {
       if (_accountDetailTab === 'contract') loadContract();
       else if (_accountDetailTab === 'cacv') loadCACV();
       else if (_accountDetailTab === 'consumption') loadConsumption();
-      else if (_accountDetailTab === 'cases') { if (currentCases.length) renderCaseList(currentCases); }
+      else if (_accountDetailTab === 'cases') {
+        // 🚨 2026-11-12(크롬 이식): Cases 재진입 시 case 재확인. 첫 조회가 ITSM 세션 확보 완주 전에
+        //   다른 탭으로 넘어가 중단되면 currentCases 가 빈 채 남는다. 그 상태로 Cases 로 돌아오면
+        //   과거엔 재조회 트리거가 없어 빈 화면 고정. → case 가 비어 있고 조회 대상(_lastTargets)이
+        //   있으면 doSearch 재실행(= ITSM 재시도). 이미 차 있으면(=완료) 재조회 없이 렌더만.
+        if (currentCases.length) renderCaseList(currentCases);
+        else if (_lastTargets?.length) {
+          doSearch(_lastTargets.map(t => t.crmId), _lastTargets.length === 1 ? _lastTargets[0].name : undefined);
+        }
+      }
     });
   });
 
@@ -4591,6 +4600,7 @@ async function one360Fetch(dbId, payload, host = ONE360_HOST, version = '453') {
   if (!(await window.CSMSession.ensureSession('one360'))) {
     throw new Error('ONE360 세션 확보 실패 — Safari에서 one360.for.sap 로그인 상태를 확인하세요.');
   }
+  let reacquired = false;   // 재확보(invalidate+ensureSession) 분기를 탔는지 = 세션을 방금 확보·검증함
   let r;
   try {
     r = await one360FetchOnce(dbId, payload, host, version);
@@ -4603,6 +4613,7 @@ async function one360Fetch(dbId, payload, host = ONE360_HOST, version = '453') {
     // 낙관 캐시('probe-ok')가 거짓 통과하지 않도록 재확보 전에 즉시 폐기(안 하면 1단계가 또 통과→무한 재시도).
     window.CSMSession.invalidate('one360');
     if (await window.CSMSession.ensureSession('one360')) {
+      reacquired = true;
       try { r = await one360FetchOnce(dbId, payload, host, version); }
       catch (e) { throw new Error(`ONE360 네트워크 오류: ${e.message}`); }
     }
@@ -4616,7 +4627,14 @@ async function one360Fetch(dbId, payload, host = ONE360_HOST, version = '453') {
     throw new Error('ONE360 로그인 필요(HTML 응답)');
   }
   const data = await r.json();
-  return data?.rows || [];
+  const rows = data?.rows || [];
+  // 🚨 2026-11-12(크롬 v1.38.48 이식): SSO 미완주/죽은 세션으로도 서버가 200+빈rows 를 줄 수 있어,
+  //   loader 가 빈 결과를 캐시하면 재클릭해도 재조회 skip → "데이터 없음" 박제. _fresh 로 "이 200 이
+  //   재확보(세션 검증)를 거쳤는지"를 실어, loader 가 "빈 rows + !_fresh"면 캐시하지 않게 한다.
+  //   크롬은 _retried===true, iOS 는 재확보 분기(reacquired)를 신호로 쓴다(세션 매니저 구조 차이).
+  //   비열거라 호출부(rows.length/forEach/map/JSON)엔 영향 없음.
+  Object.defineProperty(rows, '_fresh', { value: reacquired, enumerable: false });
+  return rows;
 }
 
 // ── ONE360 조회 래퍼 (background 핸들러 로직을 popup으로 이식. 반환 형태 {ok,...} 유지) ──
@@ -4659,7 +4677,7 @@ async function one360GetContract(accountId) {
   };
   const rows = await one360Fetch('b00b40d0-317e-429b-8047-c590c7be7285', payload);
   (rows || []).forEach(r => { r._saBucket = saBucketOf((r.values || r).Solution_Area_ID || ''); });
-  return { ok: true, rows: rows || [] };
+  return { ok: true, rows: rows || [], fresh: rows._fresh === true };
 }
 
 async function one360GetConsumption(accountId, guId) {
@@ -4681,7 +4699,7 @@ async function one360GetConsumption(accountId, guId) {
     const saId = (r.values || r).Solution_Area_ID || '';
     r._saBucket = saBucketOf(saId); r._saId = saId;
   });
-  return { ok: true, rows: rows || [] };
+  return { ok: true, rows: rows || [], fresh: rows._fresh === true };
 }
 
 async function one360GetConsumptionTrend(accountId, saId, metricId) {
@@ -4720,7 +4738,7 @@ async function one360GetCACV(accountId, saFilter, year) {
   // (datablock e83fabf4·컬럼 변경 없음, latest alias만 깨진 것. 453/456/513 모두 정상.)
   const rows = await one360Fetch('e83fabf4-5ce6-4de4-856c-fadc14f5d1be', payload, ONE360_HOST, '453');
   (rows || []).forEach(r => { r._saBucket = saBucketOf((r.values || r).Solution_Area_ID || ''); });
-  return { ok: true, rows };
+  return { ok: true, rows, fresh: rows._fresh === true };
 }
 
 /**
@@ -5145,7 +5163,14 @@ async function loadContract() {
       const resp = await one360GetContract(accountId);
       if (isStale()) return;
       if (!resp.ok) throw new Error(resp.error);
-      _contractAll = { rows: resp.rows || [], accountId, crmId: _crmId };
+      const rows = resp.rows || [];
+      // 빈 결과 + 미검증 세션(!fresh) → 죽은 세션의 가짜 빈일 수 있어 캐시하지 않음(재클릭 시 재조회).
+      if (rows.length === 0 && !resp.fresh) {
+        if (isStale()) return;
+        body.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">세션 확인 중… 잠시 후 다시 표시됩니다.</div>';
+        return; // 캐시 미설정 — 다음 조회에서 재시도
+      }
+      _contractAll = { rows, accountId, crmId: _crmId };
     }
     if (isStale()) return;
     renderContract();
@@ -5256,7 +5281,14 @@ async function loadCACV() {
       const resp = await one360GetCACV(accountId, ['BDC', 'BTP'], year);
       if (isStale()) return;
       if (!resp.ok) throw new Error(resp.error);
-      _cacvAll = { rows: resp.rows || [], accountId, crmId: _crmId };
+      const rows = resp.rows || [];
+      // 빈 결과 + 미검증 세션(!fresh) → 죽은 세션의 가짜 빈일 수 있어 캐시하지 않음(재클릭 시 재조회).
+      if (rows.length === 0 && !resp.fresh) {
+        if (isStale()) return;
+        body.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">세션 확인 중… 잠시 후 다시 표시됩니다.</div>';
+        return; // 캐시 미설정 — 다음 조회에서 재시도
+      }
+      _cacvAll = { rows, accountId, crmId: _crmId };
     }
     if (isStale()) return;
     renderCACV();
@@ -5422,6 +5454,13 @@ async function loadConsumption() {
       if (isStale()) return;
       if (!resp.ok) throw new Error(resp.error);
       const rows = resp.rows || [];
+      // 빈 메트릭 + 미검증 세션(!fresh) → 죽은 세션의 가짜 빈일 수 있어 캐시하지 않음(재클릭 시 재조회).
+      //   트렌드 병렬 조회로 들어가기 전에 차단(불필요한 조회 방지).
+      if (rows.length === 0 && !resp.fresh) {
+        if (isStale()) return;
+        body.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">세션 확인 중… 잠시 후 다시 표시됩니다.</div>';
+        return; // 캐시 미설정 — 다음 조회에서 재시도
+      }
 
       // 2단계: 각 메트릭의 월별 트렌드를 병렬 선조회(sap-notepad 2단계 플로우).
       // 기본 카드 수치(used/sub)와 드릴다운 차트 모두 트렌드 최신월을 쓴다.
