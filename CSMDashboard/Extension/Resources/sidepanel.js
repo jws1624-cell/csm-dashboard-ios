@@ -4716,7 +4716,9 @@ async function one360GetCACV(accountId, saFilter, year) {
     parameterValues: [{ parameter: 'RESPONSIBILITY_SCENARIO', values: ['381'], isNucleusParameterValue: true, nucleusParameterId: 'p_rs' }],
     offset: 0, limit: 500,
   };
-  const rows = await one360Fetch('e83fabf4-5ce6-4de4-856c-fadc14f5d1be', payload, ONE360_HOST, 'latest');
+  // cACV datablock version: 'latest' alias가 404로 깨져(2026-11-12 확인) 숫자 버전 453 사용.
+  // (datablock e83fabf4·컬럼 변경 없음, latest alias만 깨진 것. 453/456/513 모두 정상.)
+  const rows = await one360Fetch('e83fabf4-5ce6-4de4-856c-fadc14f5d1be', payload, ONE360_HOST, '453');
   (rows || []).forEach(r => { r._saBucket = saBucketOf((r.values || r).Solution_Area_ID || ''); });
   return { ok: true, rows };
 }
