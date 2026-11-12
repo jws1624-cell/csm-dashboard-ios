@@ -3448,11 +3448,14 @@ async function init() {
       else if (_accountDetailTab === 'consumption') loadConsumption();
       else if (_accountDetailTab === 'cases') {
         // 🚨 2026-11-12(크롬 이식): Cases 재진입 시 case 재확인. 첫 조회가 ITSM 세션 확보 완주 전에
-        //   다른 탭으로 넘어가 중단되면 currentCases 가 빈 채 남는다. 그 상태로 Cases 로 돌아오면
-        //   과거엔 재조회 트리거가 없어 빈 화면 고정. → case 가 비어 있고 조회 대상(_lastTargets)이
-        //   있으면 doSearch 재실행(= ITSM 재시도). 이미 차 있으면(=완료) 재조회 없이 렌더만.
+        //   중단되면 currentCases 가 빈 채 남는다. 그 상태로 Cases 로 돌아오면 재조회 트리거가 없어
+        //   빈 화면 고정. → case 있으면 렌더만(완료), 비었으면 doSearch 재실행(ITSM 재시도).
+        //   🚨 조회 대상은 _selectedAccount 우선 — _lastTargets 는 doSearch 안쪽 ITSM await 뒤에야
+        //   세팅돼 중단 시 null 일 수 있다. 이 핸들러는 진입부에서 _selectedAccount 를 보장(위 return).
         if (currentCases.length) renderCaseList(currentCases);
-        else if (_lastTargets?.length) {
+        else if (_selectedAccount?.crmId) {
+          doSearch([_selectedAccount.crmId], _selectedAccount.name || undefined);
+        } else if (_lastTargets?.length) {
           doSearch(_lastTargets.map(t => t.crmId), _lastTargets.length === 1 ? _lastTargets[0].name : undefined);
         }
       }

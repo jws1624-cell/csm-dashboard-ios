@@ -49,15 +49,19 @@ test('세션확보 실패(ok=false) → throw (기존 동작)', () => assert.str
 test('fresh 누락 + 빈 → skip (보수적)', () => assert.strictEqual(decide({ ok: true, rows: [] }), 'skip'));
 
 // ── [3] Cases 재진입 재시도 (중단된 ITSM 조회를 탭 복귀 시 다시 쏨) ─────────
-// iOS 탭 핸들러 cases 분기: case 있으면 렌더만(keep), 비었고 대상 있으면 doSearch 재실행(research).
-console.log('[3] Cases 재진입 재시도 (currentCases/_lastTargets 기준)');
-function casesReentryAction(currentCasesLen, lastTargetsLen) {
+// iOS 탭 핸들러 cases 분기: case 있으면 렌더(render), 비었으면 _selectedAccount 우선 재조회.
+//   🚨 _lastTargets 는 doSearch 안쪽 ITSM await 뒤 세팅돼 중단 시 null 가능 → _selectedAccount 우선.
+console.log('[3] Cases 재진입 재시도 (currentCases/_selectedAccount 기준)');
+function casesReentryAction(currentCasesLen, selectedCrm, lastTargetsLen) {
   if (currentCasesLen > 0) return 'render';                 // 완료 → renderCaseList, 재조회 안 함
-  if (lastTargetsLen > 0) return 'research';                // 중단/빈 → doSearch 재실행(ITSM 재시도)
+  if (selectedCrm) return 'research-selected';              // 단일(Favourite/담당자) → _selectedAccount 로 재시도
+  if (lastTargetsLen > 0) return 'research-targets';        // 다중 → _lastTargets 로 재시도
   return 'noop';                                            // 대상 없음
 }
-test('완료(case 있음) → renderCaseList, 재조회 안 함', () => assert.strictEqual(casesReentryAction(5, 1), 'render'));
-test('중단(case 빈 + 대상 있음) → doSearch 재실행(research, 핵심)', () => assert.strictEqual(casesReentryAction(0, 1), 'research'));
-test('조회 대상 없음(_lastTargets 빔) → noop', () => assert.strictEqual(casesReentryAction(0, 0), 'noop'));
+test('완료(case 있음) → renderCaseList, 재조회 안 함', () => assert.strictEqual(casesReentryAction(5, '0001099120', 1), 'render'));
+test('중단 + Favourite 단일(_selectedAccount) → _selectedAccount 로 재조회(핵심)', () => assert.strictEqual(casesReentryAction(0, '0001099120', 0), 'research-selected'));
+test('중단 + _lastTargets null 이어도 _selectedAccount 로 재조회(버그 수정)', () => assert.strictEqual(casesReentryAction(0, '0001099120', 0), 'research-selected'));
+test('중단 + 단일 없고 다중만 → _lastTargets 로 재조회', () => assert.strictEqual(casesReentryAction(0, null, 3), 'research-targets'));
+test('대상 전무 → noop', () => assert.strictEqual(casesReentryAction(0, null, 0), 'noop'));
 
 console.log(`\n✅ 전체 ${pass}개 테스트 통과`);
