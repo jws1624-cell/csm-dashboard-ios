@@ -4603,7 +4603,6 @@ async function one360Fetch(dbId, payload, host = ONE360_HOST, version = '453') {
   if (!(await window.CSMSession.ensureSession('one360'))) {
     throw new Error('ONE360 세션 확보 실패 — Safari에서 one360.for.sap 로그인 상태를 확인하세요.');
   }
-  let reacquired = false;   // 재확보(invalidate+ensureSession) 분기를 탔는지 = 세션을 방금 확보·검증함
   let r;
   try {
     r = await one360FetchOnce(dbId, payload, host, version);
@@ -4616,7 +4615,6 @@ async function one360Fetch(dbId, payload, host = ONE360_HOST, version = '453') {
     // 낙관 캐시('probe-ok')가 거짓 통과하지 않도록 재확보 전에 즉시 폐기(안 하면 1단계가 또 통과→무한 재시도).
     window.CSMSession.invalidate('one360');
     if (await window.CSMSession.ensureSession('one360')) {
-      reacquired = true;
       try { r = await one360FetchOnce(dbId, payload, host, version); }
       catch (e) { throw new Error(`ONE360 네트워크 오류: ${e.message}`); }
     }
@@ -4632,11 +4630,15 @@ async function one360Fetch(dbId, payload, host = ONE360_HOST, version = '453') {
   const data = await r.json();
   const rows = data?.rows || [];
   // 🚨 2026-11-12(크롬 v1.38.48 이식): SSO 미완주/죽은 세션으로도 서버가 200+빈rows 를 줄 수 있어,
-  //   loader 가 빈 결과를 캐시하면 재클릭해도 재조회 skip → "데이터 없음" 박제. _fresh 로 "이 200 이
-  //   재확보(세션 검증)를 거쳤는지"를 실어, loader 가 "빈 rows + !_fresh"면 캐시하지 않게 한다.
-  //   크롬은 _retried===true, iOS 는 재확보 분기(reacquired)를 신호로 쓴다(세션 매니저 구조 차이).
+  //   loader 가 빈 결과를 캐시하면 재클릭해도 재조회 skip → "데이터 없음" 박제. _fresh 로 "이 200 을
+  //   신뢰할 수 있는가(세션이 실제 확립됨)"를 실어, loader 가 "빈 rows + !_fresh"면 캐시하지 않게 한다.
+  //   🚨 2026-11-13 수정: 과거엔 reacquired(invalidate+재확보 분기)만 fresh 로 봤는데, 정상적으로
+  //     ensureSession 이 첫 호출에 통과하면 reacquired=false → "진짜 0건"까지 !_fresh 로 오판해
+  //     "세션 확인 중…"을 띄웠다(크롬과 동형 버그). iOS 는 ensureSession('one360')이 프로브 valid
+  //     또는 redirect+폴링 완주로 세션을 검증한 뒤에만 true 를 반환하는 선행 게이트다 → 여기(데이터
+  //     파싱)까지 도달했다면 세션은 이미 확립·검증된 상태이므로 _fresh=true 가 맞다.
   //   비열거라 호출부(rows.length/forEach/map/JSON)엔 영향 없음.
-  Object.defineProperty(rows, '_fresh', { value: reacquired, enumerable: false });
+  Object.defineProperty(rows, '_fresh', { value: true, enumerable: false });
   return rows;
 }
 

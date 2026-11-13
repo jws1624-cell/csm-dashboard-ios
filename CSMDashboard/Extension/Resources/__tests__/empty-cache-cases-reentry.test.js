@@ -11,19 +11,24 @@ const assert = require('assert');
 let pass = 0;
 function test(name, fn) { fn(); pass++; console.log('  ✓', name); }
 
-// ── [1] one360Fetch _fresh 판정 (재확보 분기 = reacquired) ────────────────
-console.log('[1] one360Fetch _fresh = reacquired');
-test('첫 조회(재확보 안 함) → _fresh=false (빈 결과 불신)', () => {
-  const freshOf = (reacquired) => reacquired === true;
-  assert.strictEqual(freshOf(false), false);
+// ── [1] one360Fetch _fresh 판정 (ensureSession 게이트 통과 = 세션 확립됨 = 항상 fresh) ──
+// 🚨 2026-11-13 수정: 과거엔 _fresh=reacquired(invalidate+재확보 분기)만 true 로 봤는데, 정상적으로
+//   ensureSession 이 첫 호출에 통과하면 reacquired=false → "진짜 0건"까지 !_fresh 로 오판해
+//   "세션 확인 중…"을 오표시했다. iOS 의 ensureSession('one360')은 프로브 valid 또는 redirect+폴링
+//   완주로 세션을 검증한 뒤에만 true 를 반환하는 선행 게이트 → 데이터 파싱까지 도달 = 세션 확립 = fresh.
+console.log('[1] one360Fetch _fresh = true (ensureSession 게이트 통과 = 세션 확립)');
+test('ensureSession 통과 후 조회 → _fresh=true (재확보 분기 여부 무관, 핵심 수정)', () => {
+  // one360Fetch 는 ensureSession 이 true 여야 데이터 파싱 단계에 도달하므로 _fresh 는 상수 true.
+  const freshOf = () => true;
+  assert.strictEqual(freshOf(), true);
 });
-test('세션 끊겨 재확보 후 재조회 → _fresh=true (세션 검증됨)', () => {
-  const freshOf = (reacquired) => reacquired === true;
-  assert.strictEqual(freshOf(true), true);
+test('세션 살아있는 첫 조회 0건 → _fresh=true (진짜 0건 신뢰, 세션확인중 아님)', () => {
+  const freshOf = () => true;
+  assert.strictEqual(freshOf(), true);
 });
 test('_fresh 비열거 — length/JSON 무영향', () => {
   const rows = [{ a: 1 }];
-  Object.defineProperty(rows, '_fresh', { value: false, enumerable: false });
+  Object.defineProperty(rows, '_fresh', { value: true, enumerable: false });
   assert.strictEqual(rows.length, 1);
   assert.strictEqual(JSON.parse(JSON.stringify(rows))._fresh, undefined);
   assert.strictEqual(Object.keys(rows).join(','), '0');
