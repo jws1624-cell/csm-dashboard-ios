@@ -1493,9 +1493,36 @@ async function searchUnified(q) {
   const isNumeric = /^\d+$/.test(q);
 
   const localAccounts = await loadKoreaAccounts();
-  const accountHits = isNumeric
-    ? localAccounts.filter(a => String(a.crmId).replace(/^0+/, '') === stripped)
-    : localAccounts.filter(a => a.name.toLowerCase().includes(q.toLowerCase()));
+  let accountHits;
+  if (isNumeric) {
+    accountHits = localAccounts.filter(a => String(a.crmId).replace(/^0+/, '') === stripped);
+  } else {
+    // 🚨 2026-11-13(크롬 v1.38.52 이식): 고객사 매칭을 자동완성(handleAccountInput)과 동일한 ITSM
+    //   customer_account nameCONTAINS 전역 조회로 통일. 과거엔 로컬 korea-accounts.json 서브셋만
+    //   includes 필터해, 자동완성 드롭다운엔 여러 후보가 뜨는데 "조회" 리스트엔 로컬에 있는 1건만
+    //   나오는 불일치가 있었다. ITSM 결과 + 로컬 결과를 crmId 기준 dedup 병합(로컬 우선, 메타 보강).
+    const localHits = localAccounts.filter(a => a.name.toLowerCase().includes(q.toLowerCase()));
+    let itsmHits = [];
+    try {
+      const path = `/api/now/table/customer_account?sysparm_query=nameCONTAINS${encodeURIComponent(q)}^ORDERBYDESCu_sap_crm_bp_number&sysparm_fields=name,number,u_sap_crm_bp_number&sysparm_exclude_reference_link=true`;
+      const data = await itsmFetch(path);
+      itsmHits = (data?.result || [])
+        .map(a => ({
+          crmId: a.u_sap_crm_bp_number || a.number || '',
+          name: (a.name || '').replace(/\s*\([^)]*\)\s*$/, '').trim(),
+        }))
+        .filter(a => a.crmId && a.name);
+    } catch (e) {
+      console.warn('[CSM] searchUnified 고객사 ITSM 조회 실패, 로컬만 사용', e.message);
+    }
+    const byCrm = new Map();
+    for (const a of [...localHits, ...itsmHits]) {
+      const key = String(a.crmId).replace(/^0+/, '');
+      if (!key) continue;
+      if (!byCrm.has(key)) byCrm.set(key, a);
+    }
+    accountHits = [...byCrm.values()];
+  }
 
   console.log('[CSM] accountHits=', accountHits.length, accountHits.map(a => a.name));
 
@@ -1546,8 +1573,19 @@ async function searchUnified(q) {
         seen.add(c.sys_id);
         return true;
       });
+    } else if (accountHits.length) {
+      // 🚨 2026-11-13(크롬 v1.38.52 이식): 고객사 매칭 시 account 기반으로 케이스 조회.
+      //   과거 iOS 는 매칭 여부와 무관하게 short_descriptionLIKE<q> 만 썼는데, 이는 인덱스를 못 타
+      //   수십 초 걸린다. 매칭된 고객사 전체의 케이스를 account.u_sap_crm_bp_numberIN<...> 로 한 번에
+      //   조회(상위 20개 고객사, crmId 선행 0 포함 원본).
+      const crmIds = accountHits.slice(0, 20).map(a => String(a.crmId)).filter(Boolean);
+      const inClause = crmIds.map(id => encodeURIComponent(id)).join(',');
+      const data = await itsmFetch(
+        `/api/now/table/sn_customerservice_case?sysparm_query=account.u_sap_crm_bp_numberIN${inClause}^ORDERBYDESCsys_updated_on&sysparm_fields=${fields}&sysparm_display_value=true&sysparm_limit=20`
+      );
+      caseHits = (data?.result || []).map(normalizeCase);
     } else {
-      // 텍스트 입력 → short_description 검색
+      // 고객사 매칭 실패 → 자유 텍스트로 간주, 최후수단 short_description 검색(느림).
       const data = await itsmFetch(
         `/api/now/table/sn_customerservice_case?sysparm_query=short_descriptionLIKE${encodeURIComponent(q)}&sysparm_fields=${fields}&sysparm_display_value=true&sysparm_limit=20`
       );
@@ -1557,6 +1595,8 @@ async function searchUnified(q) {
     renderUnified(accountHits, caseHits, q);
   } catch (e) {
     console.warn('[CSM] 케이스 조회 실패', e.message);
+    // 복구: 고객사는 매칭됐는데 케이스 조회만 실패했다면 고객사 결과만이라도 렌더.
+    if (accountHits.length) renderUnified(accountHits, [], q);
   }
 }
 
