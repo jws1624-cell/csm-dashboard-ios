@@ -867,19 +867,6 @@ select {
 .acc-result-id { font-size: 11px; color: var(--text-muted); }
 .acc-result-searching { padding: 8px 10px; font-size: 12px; color: var(--text-muted); font-style: italic; }
 
-/* Retrieve Case 모달 */
-.retrieve-overlay {
-  position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 9999;
-  display: flex; align-items: center; justify-content: center;
-}
-.retrieve-modal {
-  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
-  padding: 16px; width: 280px; display: flex; flex-direction: column; gap: 8px;
-}
-.retrieve-modal-title { font-size: 14px; font-weight: 600; color: var(--text); }
-.retrieve-modal-desc { font-size: 11px; color: var(--text-muted); margin: 0; }
-.retrieve-modal-actions { display: flex; gap: 6px; justify-content: flex-end; }
-
 /* ═══════════ Notifications 탭 ═══════════ */
 .tab-content {
   padding: 12px;

@@ -35,7 +35,6 @@ let _aiBase = DEFAULT_AI_BASE;
 
 function getAiInsightUrl() { return `${_aiBase}/api/ai/insight`; }
 function getMccGenerateUrl() { return `${_aiBase}/api/mcc/generate`; }
-function getRetrieveCaseUrl() { return `${_aiBase}/api/itsm/retrieve-case`; }
 
 // ── i18n ─────────────────────────────────────────────────────────────
 const STRINGS = {
@@ -3640,49 +3639,6 @@ async function init() {
       btn.textContent = t('add');
       showToast(`${t('memoFailed')}: ${e.message}`, 'error');
     }
-  };
-
-  // Retrieve Case — External Info 메시지 입력 후 케이스를 In Progress로 전환
-  document.getElementById('btnRetrieveCase').onclick = () => {
-    if (!selectedCase) return;
-    const DEFAULT_MSG = 'Returning to SAP for further processing.';
-    const overlay = document.createElement('div');
-    overlay.className = 'retrieve-overlay';
-    overlay.innerHTML = `
-      <div class="retrieve-modal">
-        <div class="retrieve-modal-title">Retrieve Case</div>
-        <p class="retrieve-modal-desc">External Info로 저장되며 케이스가 In Progress로 변경됩니다.</p>
-        <textarea id="retrieveMsgInput" class="memo-input" rows="3">${DEFAULT_MSG}</textarea>
-        <div class="retrieve-modal-actions">
-          <button id="btnRetrieveSubmit" class="btn-primary btn-sm">Retrieve</button>
-          <button id="btnRetrieveCancel" class="btn-ghost btn-sm">Cancel</button>
-        </div>
-      </div>`;
-    document.body.appendChild(overlay);
-    document.getElementById('btnRetrieveCancel').onclick = () => overlay.remove();
-    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
-    document.getElementById('btnRetrieveSubmit').onclick = async () => {
-      const msg = document.getElementById('retrieveMsgInput').value.trim();
-      if (!msg) return;
-      const submitBtn = document.getElementById('btnRetrieveSubmit');
-      submitBtn.disabled = true;
-      submitBtn.textContent = '…';
-      try {
-        const r = await fetch(getRetrieveCaseUrl(), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sysCaseId: selectedCase.sys_id, message: msg })
-        });
-        const data = await r.json();
-        if (!r.ok) throw new Error(data.error || r.status);
-        overlay.remove();
-        showToast('✅ Retrieve Case 완료 — 케이스가 In Progress로 변경되었습니다.', 'success');
-      } catch (e) {
-        submitBtn.disabled = false;
-        submitBtn.textContent = 'Retrieve';
-        showToast('❌ 실패: ' + e.message, 'error');
-      }
-    };
   };
 
   // 첨부 파일 선택
