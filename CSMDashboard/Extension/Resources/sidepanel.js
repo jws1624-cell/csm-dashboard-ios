@@ -4911,6 +4911,8 @@ function renderCurrentPanel() {
     container = document.querySelector('#cacvTab .overview-section-body');
   } else if (group === 'consumption') {
     container = document.querySelector('#consumptionTab .overview-section-body');
+  } else if (group === 'ai360') {
+    container = document.querySelector('#ai360Tab .overview-section-body');
   }
 
   console.log('[renderCurrentPanel] container:', container ? 'found' : 'NOT FOUND');

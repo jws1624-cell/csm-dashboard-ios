@@ -132,6 +132,9 @@ assert('AI360용 background sendMessage 미사용', !/ONE360_AI360/.test(sp));
 assert('AI360_WHICH 6요소', /AI360_WHICH\s*=\s*\[[^\]]*activeAcv[^\]]*consumedAcv[^\]]*usage[^\]]*unitsCharged[^\]]*adoption[^\]]*contracts/.test(sp));
 assert('self.AI360Payload.buildAI360Request 사용', /self\.AI360Payload\.buildAI360Request/.test(sp));
 assert("resetRootPanel('ai360' 호출", /resetRootPanel\('ai360'/.test(sp));
+// 🚨 renderCurrentPanel이 group==='ai360'을 #ai360Tab 컨테이너로 매핑해야 로딩 메시지가 교체된다.
+//    이 분기가 없으면 container=undefined → 로딩 메시지가 안 사라지고 내용도 안 그려짐(v2.5.2 수정).
+assert("renderCurrentPanel group==='ai360' 컨테이너 매핑", /group === 'ai360'[\s\S]*?#ai360Tab \.overview-section-body/.test(sp));
 assert('aiVal/aiEur 헬퍼 정의', /function\s+aiVal\s*\(/.test(sp) && /function\s+aiEur\s*\(/.test(sp));
 assert('탭 클릭 디스패처 ai360→loadAI360', /_accountDetailTab === 'ai360'\)\s*loadAI360\(\)/.test(sp));
 assert("applyDetailTabVisibility set('ai360Tab'", /set\('ai360Tab',\s*hasAccount && tab === 'ai360'\)/.test(sp));
