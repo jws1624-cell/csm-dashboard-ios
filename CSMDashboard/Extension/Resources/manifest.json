@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "CSM Case Dashboard",
-  "version": "2.5.0",
+  "version": "2.5.1",
   "description": "SAP CSM Team — ITSM + ONE360 Dashboard with AI Insight",
 
   "permissions": [

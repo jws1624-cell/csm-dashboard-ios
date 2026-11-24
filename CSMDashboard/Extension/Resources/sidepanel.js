@@ -1449,10 +1449,12 @@ function applyDetailTabVisibility() {
   set('consumptionTab', hasAccount && tab === 'consumption');
   set('downtimeTab', hasAccount && tab === 'downtime');
   set('ai360Tab', hasAccount && tab === 'ai360');
-  // caseList는 Cases 탭일 때 또는 직접 케이스 검색 시(_currentView === 'cases') 표시
+  // caseList는 Cases 탭일 때만 표시한다. 고객 선택(hasAccount) 또는 번호 직접검색(_currentView==='cases')
+  // 어느 경우든 tab==='cases'를 반드시 요구 — 그래야 ONE360 탭(opp/ai360/downtime/contract 등)으로
+  // 넘어갈 때 하단에 caseList가 남아 붙어 보이지 않는다.
   // account/loading/empty/error 뷰에선 showView가 caseList를 직접 숨기므로 여기선 cases 탭 조건만 본다.
   const inListMode = _currentView === 'account' || _currentView === 'loading' || _currentView === 'empty' || _currentView === 'error';
-  set('caseList', (tab === 'cases' || _currentView === 'cases') && !inListMode);
+  set('caseList', tab === 'cases' && (hasAccount || _currentView === 'cases') && !inListMode);
 
   // ONE360 탭에선 "케이스가 없습니다" emptyState를 강제로 숨긴다.
   if (hasAccount && tab !== 'cases') set('emptyState', false);
