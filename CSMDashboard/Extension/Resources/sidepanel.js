@@ -4789,6 +4789,48 @@ async function one360GetConsumptionTrend(accountId, saId, metricId) {
   return { ok: true, rows };
 }
 
+// ONE360 Cloud Reporting royalty(CPEA/BTPEA/PAYGO) — subscription datablock에 없는 사용량기반 소비.
+//   reporting.ondemand.com/sap/crp/cdo 에서 Royalties.xlsx 를 직접 GET(credentials:'include')한다.
+//   Safari는 Cookie 헤더 수동 설정이 불가·금지라, ONE360과 동일하게 브라우저 자동 첨부에 의존.
+//   reporting 세션은 ONE360 SSO를 공유하므로 ensureSession('one360')으로 먼저 세션을 깨워 쿠키를 살린다.
+//   파싱·집계는 window.RoyaltyCore(= claude-scripts one360-cloud-reporting.js SSOT 포팅, popup.html 로드).
+//   실패해도 {ok:false, reason}만 반환 — Consumption 의 subscription 섹션은 독립적으로 표시된다.
+async function one360GetRoyalty(crmId, months = 6) {
+  if (typeof window.RoyaltyCore === 'undefined' || typeof window.XLSX === 'undefined') {
+    return { ok: false, reason: 'XLSX_NOT_LOADED' };
+  }
+  // reporting 쿠키는 ONE360 SSO 공유 — one360 세션을 먼저 확보해 reporting 쿠키를 갱신.
+  try { await window.CSMSession.ensureSession('one360'); } catch (_) { /* 실패해도 기존 쿠키로 시도 */ }
+  const { dateFrom, dateEnd } = window.RoyaltyCore.monthRangeToDates(months);
+  const crm = window.RoyaltyCore.padCrm(crmId);
+  const params = new URLSearchParams({
+    type: 'CRP_HCP', list: '162', period_type: 'mp',
+    date: dateFrom, date_from: dateFrom, dateend: dateEnd,
+    customer_id: crm, csv: 'X', csv_id: 'crp_hcp_162',
+  });
+  const url = `https://reporting.ondemand.com/sap/crp/cdo?${params.toString()}`;
+  let r;
+  try {
+    r = await fetch(url, { method: 'GET', credentials: 'include', redirect: 'manual' });
+  } catch (e) {
+    return { ok: false, reason: `NETWORK_${e.message}` };
+  }
+  if (!r.ok) return { ok: false, reason: `HTTP_${r.status}` };
+  const ct = r.headers && r.headers.get ? r.headers.get('content-type') : null;
+  if (ct && /text\/html/i.test(ct)) return { ok: false, reason: 'AUTH_HTML_LOGIN' };
+  let agg;
+  try {
+    const buf = await r.arrayBuffer();
+    const lineItems = window.RoyaltyCore.parseRoyaltiesXlsx(buf, { XLSX: window.XLSX });
+    agg = window.RoyaltyCore.aggregateRoyalties(lineItems);
+  } catch (e) {
+    return { ok: false, reason: `PARSE_${e.message}` };
+  }
+  const latestMonth = agg.rows.length
+    ? agg.rows.map(x => x.yearMonth || '').sort().slice(-1)[0] : '';
+  return { ok: true, rows: agg.rows, totalEur: agg.totalEur, excluded: agg.excluded, latestMonth };
+}
+
 async function one360GetCACV(accountId, saFilter, year) {
   const filterConditions = [{ column: 'Account_ID', values: [accountId] }];
   if (saFilter.length > 0 && !(saFilter.includes('BDC') && saFilter.includes('BTP'))) {
@@ -6104,7 +6146,10 @@ async function loadConsumption() {
   const isStale = () => !_selectedAccount || _selectedAccount.crmId !== _crmId || _accountDetailTab !== 'consumption';
 
   try {
-    if (!_consumptionAll || _consumptionAll.crmId !== _selectedAccount.crmId) {
+    if (!_consumptionAll || _consumptionAll.crmId !== _selectedAccount.crmId
+        || _consumptionAll.usageBased === undefined) {
+      // usageBased===undefined: royalty 도입 전 구(舊) 캐시는 그 키가 없다. crmId만 같으면
+      //   royalty 없이 재사용돼 영영 안 뜨므로 1회 재조회(ok:false여도 키는 세팅 → 무한 재조회 방지).
       body.textContent = '사용량 정보 로딩 중...';
       const accResp = await one360GetAccount(_crmId);
       if (isStale()) return;
@@ -6143,7 +6188,17 @@ async function loadConsumption() {
       }));
       if (isStale()) return;
 
-      _consumptionAll = { rows, accountId, guId, crmId: _crmId, trendByMetric };
+      // Cloud Reporting royalty(CPEA/BTPEA/PAYGO) — subscription과 별개 소스. 실패해도 격리.
+      let usageBased = { ok: false, reason: 'NOT_FETCHED' };
+      if (!isStale()) {
+        try {
+          const rr = await one360GetRoyalty(_crmId, 6);
+          if (rr) usageBased = rr;
+        } catch (_) { /* royalty 실패 격리 */ }
+      }
+      if (isStale()) return;
+
+      _consumptionAll = { rows, accountId, guId, crmId: _crmId, trendByMetric, usageBased };
     }
     if (isStale()) return;
     renderConsumption();
@@ -6165,8 +6220,15 @@ function renderConsumption() {
   const metrics = (_consumptionAll.rows || []).filter(row => bucketMatches(row, activeSaNames));
 
   if (!metrics.length) {
-    body.innerHTML = '<div style="color: var(--text-muted); font-size: 12px;">사용량 데이터가 없습니다.</div>';
-    resetRootPanel('consumption', `${_selectedAccount.name} — Consumption`, []);
+    // subscription 메트릭이 없어도 royalty(CPEA/BTPEA/PAYGO)는 따로 있을 수 있음 → royalty만 표시.
+    const onlyRoyalty = [];
+    appendUsageBasedSection(onlyRoyalty, _consumptionAll.usageBased, activeSaNames);
+    if (onlyRoyalty.length) {
+      resetRootPanel('consumption', `${_selectedAccount.name} — Consumption`, onlyRoyalty);
+    } else {
+      body.innerHTML = '<div style="color: var(--text-muted); font-size: 12px;">사용량 데이터가 없습니다.</div>';
+      resetRootPanel('consumption', `${_selectedAccount.name} — Consumption`, []);
+    }
     return;
   }
 
@@ -6246,7 +6308,45 @@ function renderConsumption() {
     };
   });
 
+  // Usage-based (CPEA/BTPEA/PAYGO) royalty 섹션 — subscription 섹션 뒤에 append. BTP 선택 시만.
+  appendUsageBasedSection(sections, _consumptionAll.usageBased, activeSaNames);
+
   resetRootPanel('consumption', `${_selectedAccount.name} — Consumption`, sections);
+}
+
+// € 포맷터 (천단위 콤마).
+function fmtEur(n) {
+  const v = Number(n) || 0;
+  return '€' + v.toLocaleString('en-US', { maximumFractionDigits: 0 });
+}
+
+// usageBased(royalty) → "사용량 — BTP (CPEA/BTPEA/PAYGO)" 섹션 1개를 sections에 push.
+//   최신월 상위 10개(EUR desc) + 최신월 합계. BTP 선택 시에만(아무것도 선택 안 됐으면 전체로 간주).
+//   csm-dashboard-ext / sap-notepad / one360_mod와 동형. 합계는 최신월 전체(조회 전체 합 아님).
+function appendUsageBasedSection(sections, ub, activeSaNames) {
+  if (!ub || !ub.ok || !Array.isArray(ub.rows) || !ub.rows.length) return;
+  const anySelected = activeSaNames && (activeSaNames.bdc || activeSaNames.btp || activeSaNames.other);
+  if (anySelected && !activeSaNames.btp) return;
+  const latestMonth = ub.latestMonth || ub.rows.map(r => r.yearMonth || '').sort().slice(-1)[0];
+  const monthRows = ub.rows.filter(r => r.yearMonth === latestMonth && (Number(r.amountEur) || 0) > 0);
+  const monthTotal = Math.round(monthRows.reduce((s, r) => s + (Number(r.amountEur) || 0), 0) * 100) / 100;
+  const top = monthRows
+    .sort((a, b) => (Number(b.amountEur) || 0) - (Number(a.amountEur) || 0))
+    .slice(0, 10);
+  if (!top.length) return;
+  const moreTxt = top.length < monthRows.length ? ` · 상위 ${top.length}/${monthRows.length}개` : '';
+  sections.push({
+    title: `사용량 — BTP (CPEA/BTPEA/PAYGO) · ${latestMonth}`,
+    group: 'consumption',
+    sa: 'BTP',
+    blocks: [
+      { kind: 'kv', rows: top.map(r => ({
+        label: `${r.serviceName || ''} · ${r.metricName || ''}`,
+        value: `${(Number(r.actualUsage) || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })} · ${fmtEur(r.amountEur)}`,
+      })) },
+      { kind: 'text', text: `${latestMonth} 합계(청구 소비) ${fmtEur(monthTotal)}${moreTxt}` }
+    ]
+  });
 }
 
 // 트렌드 캐시 엔트리 → 최신월 { used, sub }. (No_Utilized_Max_ / No_Entitled_Max_)
