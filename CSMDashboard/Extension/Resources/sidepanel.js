@@ -507,8 +507,16 @@ let _accountDetailTab = 'cases'; // 'contract' | 'cacv' | 'consumption' | 'cases
 // SA 필터(BDC/BTP/Other) 변경은 서버 재조회 없이 클라이언트 필터링으로 처리.
 // 구조: { rows, accountId, (guId,) crmId } / 로드 안 됐으면 null
 let _contractAll = null;
+let _oppAll = null;
 let _cacvAll = null;
 let _consumptionAll = null;
+// Downtime 탭 캐시 — { crmId, rows } (rows=null=조회 실패). 전체 SA 1회 조회 후 Component 토글은 클라 필터.
+let _downtimeAll = null;
+let _downtimeReqSeq = 0;    // Downtime 로드 요청 시퀀스(비동기 레이스 가드)
+let _downtimeFilter = null; // 요약 칩 클릭 필터 key (unplanned/planned/... | null)
+// AI360 탭 캐시 — { crmId, activeAcv, consumedAcv, usage, unitsCharged, adoption, contracts } (각 rows 배열 | null=조회 실패). 6 datablock 1회 조회 후 보관.
+let _ai360All = null;
+let _ai360ReqSeq = 0;       // AI360 로드 요청 시퀀스(비동기 레이스 가드)
 // CRM→accountId 매핑 캐시 {crmId, account}. Contract/cACV/Consumption 세 탭이 공유해
 // 고객사당 one360GetAccount 조회를 1회로 줄인다. 고객사(crmId) 바뀔 때만 무효화(데이터 캐시와 수명 동일).
 let _accountIdCache = null;
@@ -1436,8 +1444,11 @@ function applyDetailTabVisibility() {
   const tab = _accountDetailTab;
   const set = (id, show) => { const el = document.getElementById(id); if (el) el.classList.toggle('hidden', !show); };
   set('contractTab', hasAccount && tab === 'contract');
+  set('oppTab', hasAccount && tab === 'opp');
   set('cacvTab', hasAccount && tab === 'cacv');
   set('consumptionTab', hasAccount && tab === 'consumption');
+  set('downtimeTab', hasAccount && tab === 'downtime');
+  set('ai360Tab', hasAccount && tab === 'ai360');
   // caseList는 Cases 탭일 때 또는 직접 케이스 검색 시(_currentView === 'cases') 표시
   // account/loading/empty/error 뷰에선 showView가 caseList를 직접 숨기므로 여기선 cases 탭 조건만 본다.
   const inListMode = _currentView === 'account' || _currentView === 'loading' || _currentView === 'empty' || _currentView === 'error';
@@ -1830,7 +1841,8 @@ async function doSearch(crmIds, overrideAccountName) {
     const prevCrm = _selectedAccount && _selectedAccount.crmId;
     _selectedAccount = { crmId: finalTargets[0].crmId, name: finalTargets[0].name };
     if (prevCrm !== _selectedAccount.crmId) {
-      _contractAll = _cacvAll = _consumptionAll = null;
+      _contractAll = _oppAll = _cacvAll = _consumptionAll = _ai360All = null;
+      _downtimeAll = null; _downtimeFilter = null;
       _accountIdCache = null;
       // 축1 워밍업: 고객사 선택 시 ONE360 세션을 백그라운드로 미리 데운다(await 없이, 실패 무시).
       // 다음 Contract 탭 클릭 시 프로브 없이 즉시 조회. ITSM은 아래 itsmFetch가 lazy 확립.
@@ -1839,7 +1851,8 @@ async function doSearch(crmIds, overrideAccountName) {
     }
   } else {
     _selectedAccount = null;
-    _contractAll = _cacvAll = _consumptionAll = null;
+    _contractAll = _oppAll = _cacvAll = _consumptionAll = _ai360All = null;
+    _downtimeAll = null; _downtimeFilter = null;
     _accountIdCache = null;
   }
   _accountDetailTab = 'cases';
@@ -3472,6 +3485,7 @@ async function init() {
         if (_accountDetailTab === 'contract' && _contractAll) renderContract();
         else if (_accountDetailTab === 'cacv' && _cacvAll) renderCACV();
         else if (_accountDetailTab === 'consumption' && _consumptionAll) renderConsumption();
+        else if (_accountDetailTab === 'downtime' && _downtimeAll) renderDowntime();
       }
     });
   });
@@ -3483,8 +3497,11 @@ async function init() {
       _accountDetailTab = tab.dataset.tab;
       applyDetailTabVisibility();
       if (_accountDetailTab === 'contract') loadContract();
+      else if (_accountDetailTab === 'opp') loadOpp();
       else if (_accountDetailTab === 'cacv') loadCACV();
       else if (_accountDetailTab === 'consumption') loadConsumption();
+      else if (_accountDetailTab === 'downtime') loadDowntime();
+      else if (_accountDetailTab === 'ai360') loadAI360();
       else if (_accountDetailTab === 'cases') {
         // 🚨 2026-11-12(크롬 이식): Cases 재진입 시 case 재확인. 첫 조회가 ITSM 세션 확보 완주 전에
         //   중단되면 currentCases 가 빈 채 남는다. 그 상태로 Cases 로 돌아오면 재조회 트리거가 없어
@@ -3506,7 +3523,8 @@ async function init() {
     document.getElementById('resultCount').textContent = '';
     _selectedAccount = null;              // 고객사 컨텍스트 초기화
     _accountDetailTab = 'cases';
-    _contractAll = _cacvAll = _consumptionAll = null; // ONE360 캐시 무효화
+    _contractAll = _oppAll = _cacvAll = _consumptionAll = _ai360All = null; // ONE360 캐시 무효화
+    _downtimeAll = null; _downtimeFilter = null;
     _accountIdCache = null;
     if (selectedOwnerKey === 'favourite') {
       renderFavouriteList();
@@ -3735,7 +3753,8 @@ function renderOwnerTabs() {
       // 섞여 렌더되는 것 방지(btnBackMain과 동일). 로드 함수의 stale 가드와 병행.
       _selectedAccount = null;
       _accountDetailTab = 'cases';
-      _contractAll = _cacvAll = _consumptionAll = null;
+      _contractAll = _oppAll = _cacvAll = _consumptionAll = _ai360All = null;
+      _downtimeAll = null; _downtimeFilter = null;
       _accountIdCache = null;
       await renderAccountList(o.ids);
     });
@@ -3753,7 +3772,8 @@ function renderOwnerTabs() {
       // 고객사 상세 컨텍스트 초기화(위 담당자 탭과 동일 이유).
       _selectedAccount = null;
       _accountDetailTab = 'cases';
-      _contractAll = _cacvAll = _consumptionAll = null;
+      _contractAll = _oppAll = _cacvAll = _consumptionAll = _ai360All = null;
+      _downtimeAll = null; _downtimeFilter = null;
       _accountIdCache = null;
       if (selectedOwnerKey === 'favourite') {
         await renderFavouriteList();
@@ -4681,6 +4701,53 @@ async function one360GetContract(accountId) {
   return { ok: true, rows: rows || [], fresh: rows._fresh === true };
 }
 
+// ── ONE360 Opp 조회 (크롬 background.js ONE360_OPP 핸들러를 popup in-page로 이식) ──
+// Cloud + OnPrem + Service 3개 datablock 병렬 조회. background 메시지 경로 대신 one360Fetch 직접 호출.
+async function one360GetOpp(accountId) {
+  const OPP_V = '413';
+  const DRM = ['Upside', 'Committed', 'Probable', 'Booked/Won'];
+  const fetchOpp = (dbId, columns, drmColumn = 'DRMCategory') =>
+    one360Fetch(dbId, {
+      columns,
+      filters: one360FilterBlock([
+        { column: 'Account_ID', values: [accountId] },
+        { column: drmColumn, values: DRM },
+      ]),
+      sortSteps: [],
+      parameterValues: [
+        { parameter: 'RESPONSIBILITY_SCENARIO', values: ['381'], isNucleusParameterValue: true, nucleusParameterId: 'p_rs' },
+      ],
+      offset: 0, limit: 200,
+    }, ONE360_HOST, OPP_V);
+  const mapOpp = (rows, type) => {
+    const fresh = rows._fresh === true; // 평탄화 전에 비열거 _fresh 먼저 읽기
+    const items = (rows || []).map(r => ({ ...(r.values || r), _type: type }));
+    return { items, fresh };
+  };
+  try {
+    const [cloud, onprem, service] = await Promise.all([
+      fetchOpp('6224a316-00d5-49c5-bc18-9940e4a6da1b',
+        ['Account_ID', 'OpportunityID', 'OpportunityDescription', 'OppStatus', 'DRMCategory',
+         'ClosingDateFactSource', 'Year_Quarter', 'Cloud_New_ACV_Financial_Restricted', 'OppOwner', 'SAP_MasterCode_title'])
+        .then(rows => mapOpp(rows, 'Cloud')),
+      fetchOpp('8c6c6bef-a588-4c45-8c9b-390beb27b216',
+        ['Account_ID', 'OpportunityID', 'OpportunityDescription', 'Sub_Solution_Area', 'OppStatus',
+         'DRMCategory', 'ClosingDate', 'Year_Quarter', 'RevenueUnweightedAfterSplit_MC_Financial_Restricted', 'Opp_Owner'])
+        .then(rows => mapOpp(rows, 'OnPrem')),
+      fetchOpp('8a8b0794-6edc-4ae7-961d-219e6c6a19ba',
+        ['Account_ID', 'Opportunity_ID', 'Opportunity_Description', 'Opp_Status', 'DRM_Category',
+         'Opportunity_Closing_Date', 'Year_Quarter_YYYY_Q_Q', 'Restricted_ACV_Travel_curr_', 'Opp_Owner'],
+        'DRM_Category')
+        .then(rows => mapOpp(rows, 'Service')),
+    ]);
+    const all = [...cloud.items, ...onprem.items, ...service.items];
+    const fresh = cloud.fresh || onprem.fresh || service.fresh;
+    return { ok: true, rows: all, fresh };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
 async function one360GetConsumption(accountId, guId) {
   const payload = {
     columns: ['Account_ID', 'Solution_Area', 'Solution_Area_ID', 'MetricID', 'MetricText',
@@ -5139,6 +5206,596 @@ function resetRootPanel(group, heading, sections) {
   _viewStack.length = 0;
   _viewStack.push({ heading, containerGroup: group, sections });
   renderCurrentPanel();
+}
+
+// ── ONE360 Opp 탭 (크롬 확장에서 이식) ──────────────────────────────────────
+const HARMONY_OPP_URL = 'https://sapit-home-prod-004.launchpad.cfapps.eu10.hana.ondemand.com/site#harmonyquote-Display?sap-ui-app-id-hint=1ff99794-b150-4e6d-ad32-d960c79f9a7a&/Opportunity/';
+
+function renderOpp(rows) {
+  const panel = document.getElementById('oppTab');
+  if (!panel) return;
+  setProgress(''); // 조회 완료 렌더(데이터 0건 포함) → SSO 진행 메시지 제거
+  if (!rows || rows.length === 0) {
+    panel.innerHTML = '<div class="overview-section"><div class="overview-section-body">파이프라인 Opp 없음</div></div>';
+    return;
+  }
+
+  const today = new Date().toISOString().slice(0, 10); // 'YYYY-MM-DD'
+
+  // closing date 추출 헬퍼
+  const getClosing = row => {
+    const t = row._type || '';
+    return t === 'Service' ? (row.Opportunity_Closing_Date || '')
+         : t === 'Cloud'   ? (row.ClosingDateFactSource || '')
+         : (row.ClosingDate || '');
+  };
+
+  // 오늘 이후 closing인 행만, closing 오름차순 정렬
+  const future = rows
+    .filter(row => { const c = getClosing(row); return c && c >= today; })
+    .sort((a, b) => getClosing(a).localeCompare(getClosing(b)));
+
+  if (future.length === 0) {
+    panel.innerHTML = '<div class="overview-section"><div class="overview-section-body">예정된 Opp 없음</div></div>';
+    return;
+  }
+
+  let html = '<div class="opp-list">';
+  for (const row of future) {
+    const type = row._type || '';
+    const oppId = type === 'Service' ? (row.Opportunity_ID || '') : (row.OpportunityID || '');
+    const desc = type === 'Service' ? (row.Opportunity_Description || '') : (row.OpportunityDescription || '');
+    const drm = type === 'Service' ? (row.DRM_Category || '') : (row.DRMCategory || '');
+    const status = type === 'Service' ? (row.Opp_Status || '') : (row.OppStatus || '');
+    const acvRaw = type === 'Cloud' ? row.Cloud_New_ACV_Financial_Restricted
+                 : type === 'OnPrem' ? row.RevenueUnweightedAfterSplit_MC_Financial_Restricted
+                 : row.Restricted_ACV_Travel_curr_;
+    const closingDate = getClosing(row);
+    const yq = type === 'Service' ? (row.Year_Quarter_YYYY_Q_Q || '') : (row.Year_Quarter || '');
+    const oppLink = oppId
+      ? `<a href="${HARMONY_OPP_URL}${oppId}" target="_blank" class="opp-id-link">${oppId}</a>`
+      : '-';
+    const acvFmt = acvRaw != null && acvRaw !== '' ? `€${Number(acvRaw).toLocaleString()}` : '-';
+    html += `<div class="opp-item">
+      <div class="opp-row">${oppLink}<span class="opp-badge opp-type-${type.toLowerCase()}">${type}</span></div>
+      <div class="opp-row opp-desc">${desc || '-'}</div>
+      <div class="opp-row"><span class="opp-label">DRM</span>${drm || '-'}&nbsp;&nbsp;<span class="opp-label">Status</span>${status || '-'}</div>
+      <div class="opp-row"><span class="opp-label">ACV</span>${acvFmt}&nbsp;&nbsp;<span class="opp-label">YQ</span>${yq || '-'}</div>
+      <div class="opp-row"><span class="opp-label">Closing</span>${closingDate || '-'}</div>
+    </div>`;
+  }
+  html += '</div>';
+  panel.innerHTML = html;
+}
+
+async function loadOpp() {
+  if (!_selectedAccount) return;
+  const panel = document.getElementById('oppTab');
+  if (!panel) return;
+  if (_oppAll !== null && _oppAll.crmId === _selectedAccount.crmId) {
+    renderOpp(_oppAll.rows);
+    return;
+  }
+  panel.innerHTML = '<div class="overview-section"><div class="overview-section-body">Opp 정보 로딩 중...</div></div>';
+  const accountId = _selectedAccount.crmId;
+  try {
+    const res = await one360GetOpp(accountId); // iOS: background 메시지 대신 in-page fetch
+    if (!_selectedAccount || _selectedAccount.crmId !== accountId) return;
+    if (!res.ok) throw new Error(res.error);
+    const rows = res.rows || [];
+    // 빈 결과 + 미검증 세션(!fresh) → 죽은 세션의 가짜 빈일 수 있어 캐시하지 않음(재클릭 시 재조회).
+    if (rows.length === 0 && !res.fresh) {
+      panel.innerHTML = '<div class="overview-section"><div class="overview-section-body" style="color:var(--text-muted);font-size:12px;">세션 확인 중… 잠시 후 다시 표시됩니다.</div></div>';
+      return; // 캐시 미설정
+    }
+    _oppAll = { crmId: accountId, rows };
+    renderOpp(rows);
+  } catch (e) {
+    if (panel) panel.innerHTML = `<div class="overview-section"><div class="overview-section-body">Opp 로드 실패: ${e.message}</div></div>`;
+  }
+}
+
+// ── ONE360 Downtime 탭 (크롬 확장에서 이식) ──────────────────────────────────
+// 크롬은 background ONE360_DOWNTIME 메시지로 조회하지만, iOS는 in-page fetch(one360Fetch) 직접.
+// datablock cb39593b, v539. 전체 SA(BDC+BTP+Other) 1회 조회 후 Component 토글은 클라이언트 필터.
+async function one360GetDowntime(crmId) {
+  try {
+    const req = self.DowntimePayload.buildDowntimeRequest(crmId);
+    const rows = await one360Fetch(req.datablockId, req.payload, ONE360_HOST, req.version);
+    return { ok: true, rows: rows || [], fresh: rows && rows._fresh === true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+// row의 values 구조에서 값 꺼내기(AI360 aiVal과 동일 관례).
+function _dtVal(r, col) { const v = (r && r.values) || r || {}; return v[col]; }
+// GMT ISO → "YYYY-MM-DD HH:mm" 간결 표기.
+function _dtTs(s) { return String(s || '').replace('T', ' ').replace('Z', '').slice(0, 16); }
+function _dtDur(s) { return String(s || '').replace(/\s+/g, ' ').trim(); }
+
+// downtime 이벤트의 SOLUTION_AREA → 버킷. 'Technology Foundation'=BTP / 'Data & AI'=BDC / 그 외=Other.
+// ⚠️ 'Technology Foundation'도 'BAIP' 문자열을 포함하므로 BTP를 먼저 판정.
+function downtimeEventBucket(row) {
+  const sa = String(_dtVal(row, 'SOLUTION_AREA') || '').toUpperCase();
+  if (sa.includes('TECHNOLOGY FOUNDATION')) return 'BTP';
+  if (sa.includes('DATA & AI') || sa.includes('DATA AND AI')) return 'BDC';
+  return 'OTHER';
+}
+// row가 현재 선택된 Component(BDC/BTP/Other)에 속하는지. 미선택 시 전체(selectedComponents 기본값).
+function downtimeRowMatches(row) {
+  const comps = selectedComponents();
+  const b = downtimeEventBucket(row);
+  return (b === 'BDC' && comps.includes('BDC'))
+    || (b === 'BTP' && comps.includes('BTP'))
+    || (b === 'OTHER' && comps.includes('OTHER'));
+}
+
+// 요약 KV 필터 정의: key → 테이블 행 술어. 클릭 시 _downtimeFilter 토글.
+// ⚠️ EVENT_STATUS(In Process)는 종료된 이벤트도 In Process로 남아 무의미 → 요약/필터에서 제외.
+const DOWNTIME_FILTERS = {
+  unplanned:   { label: 'Unplanned',  pred: r => _dtVal(r, 'EVENT_TYPE_CONS') === 'Unplanned Event' },
+  planned:     { label: 'Planned',    pred: r => _dtVal(r, 'EVENT_TYPE_CONS') === 'Planned Event' },
+  maintenance: { label: 'Maintenance',pred: r => _dtVal(r, 'EVENT_TYPE_CONS') === 'Maintenance' },
+  sla:         { label: 'SLA 관련',    pred: r => _dtVal(r, 'SLA_RELEVANT') === 'Yes' },
+  disruption:  { label: 'Disruption', pred: r => _dtVal(r, 'DOWNTIME_TYPE_CODE') === 'Disruption' },
+};
+
+// 현재 표시된 테이블을 TSV로 (복사 버튼용).
+function downtimeTsv(rows) {
+  const DowntimeP = (typeof self !== 'undefined' && self.DowntimePayload) || null;
+  const spc = (DowntimeP && DowntimeP.spcUrl) ? DowntimeP.spcUrl
+    : (eid) => eid ? `https://notif.spc.ondemand.com/open?evt=${encodeURIComponent(eid)}` : '';
+  const header = ['Event ID', 'Type', 'Downtime Type', 'Sub-Solution Area', 'Start (GMT)', 'End (GMT)', 'Duration', 'SLA', 'Data Center', 'SPC URL'];
+  const lines = [header.join('\t')];
+  rows.forEach(r => {
+    const eid = _dtVal(r, 'EVENT_ID') || '';
+    lines.push([
+      eid,
+      _dtVal(r, 'EVENT_TYPE_CONS') || '',
+      _dtVal(r, 'DOWNTIME_TYPE_CODE') || '',
+      _dtVal(r, 'SUB_SOLUTION_AREA') || '',
+      _dtTs(_dtVal(r, 'START_TST_GMT')),
+      _dtTs(_dtVal(r, 'END_TST_GMT')),
+      _dtDur(_dtVal(r, 'FORMATTED_EVENT_DURATION')),
+      _dtVal(r, 'SLA_RELEVANT') || '',
+      _dtVal(r, 'DATA_CENTER') || '',
+      spc(eid),
+    ].map(c => String(c == null ? '' : c).replace(/\t/g, ' ').replace(/\r?\n/g, ' ')).join('\t'));
+  });
+  return lines.join('\n');
+}
+
+// ── AI360 탭 ──────────────────────────────────────────────────────────
+// ONE360 AI360 Dashboard(6개 datablock, version 513)를 한 탭에 집약.
+// 계정 스코프는 CRM ID 직접(map 문서) — GU 변환 없음. iOS는 background 메시지 대신
+// self.AI360Payload 빌더 + one360Fetch(in-page)로 조회한다(contract/downtime과 동일 경로).
+const AI360_WHICH = ['activeAcv', 'consumedAcv', 'usage', 'unitsCharged', 'adoption', 'contracts'];
+
+// row의 values/labels 이중구조에서 값 꺼내기(label 우선, 코드값 폴백 — renderCACV와 동일 관례).
+function aiVal(row, col, preferLabel) {
+  const v = (row && row.values) || row || {};
+  const l = (row && row.labels) || {};
+  if (preferLabel && l[col] != null && l[col] !== '') return l[col];
+  return v[col];
+}
+function aiEur(n) {
+  return '€' + Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 0 });
+}
+
+// AI360 1개 datablock 조회(in-page). rows 배열 반환(실패 시 throw — loadAI360이 allSettled로 흡수).
+async function one360GetAI360(which, crmId) {
+  const req = self.AI360Payload.buildAI360Request(which, crmId);
+  const rows = await one360Fetch(req.datablockId, req.payload, 'one360.for.sap', req.version);
+  return rows;
+}
+
+async function loadAI360() {
+  if (!_selectedAccount) return;
+  const ai360Tab = document.getElementById('ai360Tab');
+  if (!ai360Tab) return;
+  const body = ai360Tab.querySelector('.overview-section-body');
+  const _crmId = _selectedAccount.crmId;
+  const _seq = ++_ai360ReqSeq;
+  const isStale = () => !_selectedAccount || _selectedAccount.crmId !== _crmId
+    || _accountDetailTab !== 'ai360' || _seq !== _ai360ReqSeq;
+
+  try {
+    if (!_ai360All || _ai360All.crmId !== _crmId) {
+      body.textContent = 'AI360 정보 로딩 중...';
+      if (isStale()) return;
+      // 6개 datablock 병렬 조회. 개별 실패는 그 섹션만 비우고 전체는 계속(allSettled).
+      const settled = await Promise.allSettled(
+        AI360_WHICH.map(which => one360GetAI360(which, _crmId))
+      );
+      if (isStale()) return;
+      const data = { crmId: _crmId };
+      AI360_WHICH.forEach((which, i) => {
+        const s = settled[i];
+        data[which] = s.status === 'fulfilled' ? s.value : null; // null = 조회 실패
+      });
+      _ai360All = data;
+    }
+    if (isStale()) return;
+    renderAI360();
+  } catch (err) {
+    if (isStale()) return;
+    console.error('[CSM] AI360 로드 실패:', err);
+    body.innerHTML = `<div style="color: #c2185b; font-size: 12px;">오류: ${err.message}</div>`;
+  }
+}
+
+// 캐시(_ai360All)를 섹션들로 변환해 루트 패널 build. SA Component 필터는 적용 안 함
+// (AI는 AI_TYPE/SOLUTION_AREA로 자체 구분되므로 BDC/BTP 버킷 필터 대상이 아님).
+function renderAI360() {
+  const ai360Tab = document.getElementById('ai360Tab');
+  if (!ai360Tab || !_ai360All) return;
+  setProgress(''); // 조회 완료 렌더(데이터 0건 포함) → SSO 진행 메시지 제거
+
+  const sections = [];
+  const noData = (which) => _ai360All[which] === null; // 조회 실패
+  const rowsOf = (which) => Array.isArray(_ai360All[which]) ? _ai360All[which] : [];
+
+  // ── Active AI ACV ──
+  {
+    const rows = rowsOf('activeAcv');
+    const r = rows[0];
+    const kv = [];
+    if (r) {
+      const sum = Number(aiVal(r, 'total-active-acv-selected-customer-1') || 0);
+      const avgAll = Number(aiVal(r, 'total-active-average-acv-overall-customer-1') || 0);
+      const cur = aiVal(r, 'TARGET_CURRENCY') || 'EUR';
+      kv.push({ label: 'Active AI ACV', value: `${aiEur(sum)} ${cur !== 'EUR' ? cur : ''}`.trim(), tone: 'ok' });
+      if (avgAll) kv.push({ label: '전체 평균', value: aiEur(avgAll) });
+    }
+    sections.push({
+      title: 'Active AI ACV',
+      subtitle: noData('activeAcv') ? '조회 실패' : (r ? null : '데이터 없음'),
+      blocks: kv.length ? [{ kind: 'kv', rows: kv }] : [],
+    });
+  }
+
+  // ── AI Consumed ACV (월별 Active/Consumed + 소비율) ──
+  {
+    const rows = rowsOf('consumedAcv');
+    const sorted = rows.slice().sort((a, b) =>
+      String(aiVal(a, 'month')).localeCompare(String(aiVal(b, 'month'))));
+    const blocks = [];
+    if (sorted.length) {
+      const labels = sorted.map(r => String(aiVal(r, 'month')).slice(0, 7));
+      const activeAcv = sorted.map(r => Number(aiVal(r, 'active-acv-1') || 0));
+      const consumedArr = sorted.map(r => Number(aiVal(r, 'consumed-acv-1') || 0));
+      const ratioArr = sorted.map(r => Number(aiVal(r, 'CONSUMPTION_RATIO') || 0));
+      // Active/Consumed ACV 막대 + 소비율 라인(보조축). 원본 ONE360 차트와 동일 구성.
+      blocks.push({
+        kind: 'chart', mode: 'bar', valueFmt: 'eur', showAxis: true, showLegend: true,
+        labels,
+        series: [
+          { label: 'Active ACV (EUR)', values: activeAcv, tone: 'default' },
+          { label: 'Consumed ACV (EUR)', values: consumedArr, tone: 'ok' },
+          { label: '소비율 (%)', values: ratioArr.map(v => +(v * 100).toFixed(4)), tone: 'warn', type: 'line', axis: 'right', valueFmt: 'pct' },
+        ],
+        tooltipExtra: labels.map((_, i) => [
+          `Consumed ACV: €${consumedArr[i].toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+          `소비율: ${(ratioArr[i] * 100).toFixed(2)}%`,
+        ]),
+      });
+      // 월별 상세: Active / Consumed / 소비율 — 숫자로 정확히 표기
+      blocks.push({
+        kind: 'table',
+        columns: ['Month', 'Active ACV', 'Consumed ACV', '소비율'],
+        rows: sorted.map(r => {
+          const act = Number(aiVal(r, 'active-acv-1') || 0);
+          const con = Number(aiVal(r, 'consumed-acv-1') || 0);
+          const ratio = Number(aiVal(r, 'CONSUMPTION_RATIO') || 0);
+          return [
+            String(aiVal(r, 'month')).slice(0, 7),
+            aiEur(act),
+            con > 0 ? `€${con.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '€0',
+            `${(ratio * 100).toFixed(2)}%`,
+          ];
+        }),
+      });
+    }
+    sections.push({
+      title: 'AI Consumed ACV',
+      subtitle: noData('consumedAcv') ? '조회 실패' : (sorted.length ? 'Last 12 months in EUR' : '데이터 없음'),
+      blocks,
+    });
+  }
+
+  // ── AI Usage / Traffic (최신 완료월 = penultimate 월, AI_TYPE별 집계) ──
+  {
+    const rows = rowsOf('usage');
+    const months = [...new Set(rows.map(r => String(aiVal(r, 'SNAPSHOT_MONTH') || '')))].filter(Boolean).sort();
+    // 원본 ONE360과 동일: 가장 최신 월은 진행 중이라 그 직전(penultimate) 월을 기준으로.
+    const baseMonth = months.length >= 2 ? months[months.length - 2] : months[months.length - 1];
+    const byType = {};
+    rows.forEach(r => {
+      if (String(aiVal(r, 'SNAPSHOT_MONTH') || '') !== baseMonth) return;
+      const t = aiVal(r, 'AI_TYPE', true) || '(미상)';
+      byType[t] = (byType[t] || 0) + Number(aiVal(r, 'TRAFFIC') || 0);
+    });
+    const typeRows = Object.entries(byType).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+    sections.push({
+      title: 'AI Usage / Traffic',
+      subtitle: noData('usage') ? '조회 실패' : (typeRows.length ? `${baseMonth} 기준 traffic (호출 건수)` : '데이터 없음'),
+      blocks: typeRows.length ? [{
+        kind: 'table', columns: ['AI Type', 'Traffic'],
+        rows: typeRows.map(([t, v]) => [t, v.toLocaleString('en-US')]),
+      }] : [],
+    });
+  }
+
+  // ── AI Units Consumption - Details (월별 feature별 소진) ──
+  {
+    const rows = rowsOf('unitsCharged');
+    // BILL_USAGE/CHARGES_UNITS 둘 다 0인 노이즈 행 제외, 소진량 큰 순 정렬
+    const detail = rows
+      .map(r => ({
+        month: String(aiVal(r, 'BILL_FROM_DATE') || '').slice(0, 7),
+        feature: aiVal(r, 'BILL_METRIC_NAME', true) || aiVal(r, 'SUB_SOLUTION_AREA', true) || '',
+        measure: aiVal(r, 'BILL_USAGE_UNIT_OF_MEASUREMENT', true) || '',
+        usage: Number(aiVal(r, 'BILL_USAGE') || 0),
+        charged: Number(aiVal(r, 'CHARGES_UNITS') || 0),
+      }))
+      .filter(d => d.usage > 0 || d.charged > 0)
+      .sort((a, b) => (b.month.localeCompare(a.month)) || (b.charged - a.charged) || (b.usage - a.usage));
+    sections.push({
+      title: 'AI Units Consumption',
+      subtitle: noData('unitsCharged') ? '조회 실패' : (detail.length ? 'Charges (AI Units) = 실제 차감량' : '데이터 없음'),
+      blocks: detail.length ? [{
+        kind: 'table',
+        columns: ['Month', 'Feature', 'Measure', 'Used', 'Charges'],
+        rows: detail.map(d => [
+          d.month, d.feature, d.measure,
+          d.usage.toLocaleString('en-US'),
+          d.charged.toLocaleString('en-US'),
+        ]),
+      }] : [],
+    });
+  }
+
+  // ── AI Adoption - Details (Roadmap feature 상세) ──
+  {
+    const rows = rowsOf('adoption');
+    const detail = rows.map(r => [
+      aiVal(r, 'ai_roadmap_ai_feature_catalog_items_product', true) || '',
+      aiVal(r, 'ai_roadmap_ai_feature_catalog_items_name', true) || '',
+      aiVal(r, 'ai_roadmap_feature_status', true) || '',
+      String(aiVal(r, 'ai_roadmap_deadline') || '').slice(0, 10),
+    ]).filter(row => row[0] || row[1]);
+    sections.push({
+      title: 'AI Adoption',
+      subtitle: noData('adoption') ? '조회 실패' : (detail.length ? 'AI Roadmap 식별 Feature' : '데이터 없음'),
+      blocks: detail.length ? [{
+        kind: 'table',
+        columns: ['Product', 'AI Feature', 'Status', 'Deadline'],
+        rows: detail,
+      }] : [],
+    });
+  }
+
+  // ── AI Contracts ──
+  {
+    const rows = rowsOf('contracts');
+    // Current 먼저, 그다음 Future/Past. ACV 큰 순.
+    const order = { Current: 0, Future: 1, Past: 2 };
+    const sorted = rows.slice().sort((a, b) => {
+      const oa = order[aiVal(a, 'ITEM_PAST_CURRENT_FUTURE', true)] ?? 3;
+      const ob = order[aiVal(b, 'ITEM_PAST_CURRENT_FUTURE', true)] ?? 3;
+      return oa - ob || Number(aiVal(b, 'ACTIVE_ACV_RESTRICTED') || 0) - Number(aiVal(a, 'ACTIVE_ACV_RESTRICTED') || 0);
+    });
+    sections.push({
+      title: 'AI Contracts',
+      subtitle: noData('contracts') ? '조회 실패' : (sorted.length ? null : '데이터 없음'),
+      blocks: sorted.length ? [{
+        kind: 'table', columns: ['Product', 'Type', 'Active ACV', 'P/C/F'],
+        rows: sorted.map(r => {
+          const acv = Number(aiVal(r, 'ACTIVE_ACV_RESTRICTED') || 0);
+          const name = aiVal(r, 'MATERIAL', true) || aiVal(r, 'MATERIAL_ID_UNPADDED') || '';
+          return [
+            name,
+            aiVal(r, 'TYPE_SKU', true) || '',
+            acv > 0 ? aiEur(acv) : '-',
+            aiVal(r, 'ITEM_PAST_CURRENT_FUTURE', true) || '',
+          ];
+        }),
+      }] : [],
+    });
+  }
+
+  resetRootPanel('ai360', `${_selectedAccount.name || _selectedAccount.crmId} — AI360`, sections);
+}
+
+async function loadDowntime() {
+  if (!_selectedAccount) return;
+  const downtimeTab = document.getElementById('downtimeTab');
+  if (!downtimeTab) return;
+  const body = downtimeTab.querySelector('.overview-section-body');
+  const _crmId = _selectedAccount.crmId;
+  const _seq = ++_downtimeReqSeq;
+  const isStale = () => !_selectedAccount || _selectedAccount.crmId !== _crmId
+    || _accountDetailTab !== 'downtime' || _seq !== _downtimeReqSeq;
+
+  try {
+    // 전체 SA(BDC+BTP+Other) 1회 조회 후 캐시. Component 토글은 클라 필터(renderDowntime). 캐시 키는 crmId만.
+    if (!_downtimeAll || _downtimeAll.crmId !== _crmId) {
+      _downtimeFilter = null; // 고객 전환 시 요약 필터 리셋
+      body.textContent = 'Downtime 정보 로딩 중...';
+      if (isStale()) return;
+      const resp = await one360GetDowntime(_crmId); // iOS: background 메시지 대신 in-page fetch
+      if (isStale()) return;
+      if (!resp || !resp.ok) {
+        _downtimeAll = { crmId: _crmId, rows: null }; // null = 조회 실패
+      } else {
+        // Cancelled(취소)는 어디서도 장애가 아니므로 제외. 0초·Test·미종료는 운영 판단용으로 원본 유지.
+        const rows = (resp.rows || []).filter(r => String(_dtVal(r, 'EVENT_STATUS') || '').toLowerCase() !== 'cancelled');
+        _downtimeAll = { crmId: _crmId, rows };
+      }
+    }
+    if (isStale()) return;
+    renderDowntime();
+  } catch (err) {
+    if (isStale()) return;
+    console.error('[CSM] Downtime 로드 실패:', err);
+    body.innerHTML = `<div style="color: #c2185b; font-size: 12px;">오류: ${err.message}</div>`;
+  }
+}
+
+function renderDowntime() {
+  const downtimeTab = document.getElementById('downtimeTab');
+  if (!downtimeTab || !_downtimeAll) return;
+  const body = downtimeTab.querySelector('.overview-section-body');
+  if (!body) return;
+  setProgress(''); // 조회 완료 렌더(데이터 0건 포함) → SSO 진행 메시지 제거
+
+  const failed = _downtimeAll.rows === null;
+  const cachedRows = Array.isArray(_downtimeAll.rows) ? _downtimeAll.rows : [];
+
+  if (failed) { body.innerHTML = '<div style="color:#c2185b;font-size:12px;">Downtime 조회 실패</div>'; return; }
+  if (!cachedRows.length) { body.innerHTML = '<div style="color:var(--text-muted);font-size:12px;">Downtime 이벤트 없음 (최근 1년)</div>'; return; }
+
+  // Component(BDC/BTP/Other) 클라이언트 필터 — 이벤트 SOLUTION_AREA 기준.
+  const allRows = cachedRows.filter(downtimeRowMatches);
+
+  // 집계 (요약 칩 = Component 필터 적용 후 기준 — 화면 테이블과 일치).
+  const byType = {};
+  let slaYes = 0, disruption = 0;
+  allRows.forEach(r => {
+    const t = _dtVal(r, 'EVENT_TYPE_CONS') || '(미상)';
+    byType[t] = (byType[t] || 0) + 1;
+    if (_dtVal(r, 'SLA_RELEVANT') === 'Yes') slaYes++;
+    if (_dtVal(r, 'DOWNTIME_TYPE_CODE') === 'Disruption') disruption++;
+  });
+
+  // 활성 요약 필터(칩 클릭) 적용.
+  const f = _downtimeFilter && DOWNTIME_FILTERS[_downtimeFilter];
+  const rows = f ? allRows.filter(f.pred) : allRows;
+
+  // 현재 선택된 Component 라벨.
+  const saLabel = (() => {
+    const comps = selectedComponents();
+    const parts = [];
+    if (comps.includes('BDC')) parts.push('BDC');
+    if (comps.includes('BTP')) parts.push('BTP');
+    if (comps.includes('OTHER')) parts.push('Other');
+    return parts.join(' · ') || '전체';
+  })();
+
+  // ── DOM 조립 ──
+  body.innerHTML = '';
+  const wrap = document.createElement('div');
+  wrap.className = 'downtime-wrap';
+
+  // 헤딩 — 다른 탭과 동일한 '고객사명 — Downtime' + Solution Area 서브타이틀.
+  const headingDiv = document.createElement('div');
+  headingDiv.className = 'one360-panel-heading';
+  headingDiv.textContent = `${_selectedAccount.name || _selectedAccount.crmId} — Downtime`;
+  if (saLabel) {
+    const sub = document.createElement('div');
+    sub.className = 'one360-panel-subtitle';
+    sub.textContent = `Solution Area: ${saLabel}`;
+    headingDiv.appendChild(sub);
+  }
+  wrap.appendChild(headingDiv);
+
+  // 요약 KV (클릭 가능 칩). 총 이벤트는 비-클릭.
+  const summary = document.createElement('div');
+  summary.className = 'downtime-summary';
+  const addChip = (key, label, count, tone) => {
+    const chip = document.createElement('button');
+    chip.className = 'downtime-chip' + (tone ? ' tone-' + tone : '') + (_downtimeFilter === key ? ' active' : '');
+    chip.type = 'button';
+    chip.innerHTML = `<span class="dc-label">${label}</span><span class="dc-count">${count}</span>`;
+    if (key) {
+      chip.title = `클릭: ${label}만 필터 (재클릭 해제)`;
+      chip.addEventListener('click', () => {
+        _downtimeFilter = (_downtimeFilter === key) ? null : key;
+        renderDowntime();
+      });
+    } else {
+      chip.classList.add('static');
+    }
+    summary.appendChild(chip);
+  };
+  addChip(null, '총 이벤트', allRows.length, 'default');
+  addChip('unplanned', 'Unplanned', byType['Unplanned Event'] || 0, 'warn');
+  if (byType['Planned Event']) addChip('planned', 'Planned', byType['Planned Event'], 'default');
+  if (byType['Maintenance']) addChip('maintenance', 'Maintenance', byType['Maintenance'], 'default');
+  addChip('sla', 'SLA 관련', slaYes, 'warn');
+  addChip('disruption', 'Disruption', disruption, 'warn');
+  wrap.appendChild(summary);
+
+  // 툴바: 필터 배지 + 복사 버튼.
+  const toolbar = document.createElement('div');
+  toolbar.className = 'downtime-toolbar';
+  const info = document.createElement('div');
+  info.className = 'downtime-info';
+  if (f) {
+    info.innerHTML = `필터: <span class="downtime-badge">${f.label} <span class="dt-x" title="필터 해제">✕</span></span> <span class="dt-count">${rows.length} / ${allRows.length}건</span>`;
+    const x = info.querySelector('.downtime-badge');
+    if (x) x.addEventListener('click', () => { _downtimeFilter = null; renderDowntime(); });
+  } else {
+    info.innerHTML = `<span class="dt-count">${allRows.length}건 · 시작 시각 내림차순 (GMT)</span>`;
+  }
+  toolbar.appendChild(info);
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'downtime-copy';
+  copyBtn.type = 'button';
+  copyBtn.title = '현재 표시된 테이블을 클립보드에 복사 (TSV)';
+  copyBtn.textContent = '📋';
+  attachCopy(copyBtn, () => downtimeTsv(rows));
+  toolbar.appendChild(copyBtn);
+  wrap.appendChild(toolbar);
+
+  // 상세 테이블 (1단계 조회 — 제품군=Sub-Solution Area 컬럼. 테넌트 드릴다운 폐지).
+  const DowntimeP = (typeof self !== 'undefined' && self.DowntimePayload) || null;
+  const spc = (DowntimeP && DowntimeP.spcUrl) ? DowntimeP.spcUrl
+    : (eid) => eid ? `https://notif.spc.ondemand.com/open?evt=${encodeURIComponent(eid)}` : '';
+  const columns = ['Event ID', 'Type', 'Downtime Type', 'Sub-Solution Area', 'Start (GMT)', 'End (GMT)', 'Duration', 'SLA', 'Data Center'];
+
+  const table = document.createElement('table');
+  table.className = 'one360-table downtime-table';
+  const thead = document.createElement('thead');
+  const htr = document.createElement('tr');
+  columns.forEach(c => { const th = document.createElement('th'); th.textContent = c; htr.appendChild(th); });
+  thead.appendChild(htr);
+  table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+
+  rows.forEach(r => {
+    const eid = _dtVal(r, 'EVENT_ID') || '';
+    const tr = document.createElement('tr');
+
+    // Event ID (SPC 링크).
+    const idTd = document.createElement('td');
+    const url = spc(eid);
+    if (url) {
+      const a = document.createElement('a');
+      a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.className = 'ref-link';
+      a.textContent = eid; a.title = 'SPC 공지 상세 (SPC 인증 필요)';
+      idTd.appendChild(a);
+    } else idTd.textContent = eid;
+    tr.appendChild(idTd);
+
+    [
+      _dtVal(r, 'EVENT_TYPE_CONS') || '',
+      _dtVal(r, 'DOWNTIME_TYPE_CODE') || '',
+      _dtVal(r, 'SUB_SOLUTION_AREA') || '',  // 제품군
+      _dtTs(_dtVal(r, 'START_TST_GMT')),
+      _dtTs(_dtVal(r, 'END_TST_GMT')),
+      _dtDur(_dtVal(r, 'FORMATTED_EVENT_DURATION')),
+      _dtVal(r, 'SLA_RELEVANT') || '',
+      _dtVal(r, 'DATA_CENTER') || '',
+    ].forEach(v => { const td = document.createElement('td'); td.textContent = v; tr.appendChild(td); });
+
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  wrap.appendChild(table);
+
+  body.appendChild(wrap);
 }
 
 // 진입점: 캐시 없으면 서버 조회(BDC+BTP 전체) 후 렌더, 있으면 바로 렌더.

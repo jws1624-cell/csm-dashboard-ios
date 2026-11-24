@@ -1296,3 +1296,136 @@ select {
 .csm-toast.toast-success { background: #1a7f37; }
 .csm-toast.toast-error { background: #b42318; }
 .csm-toast.toast-info { background: #333; }
+
+/* ── ONE360 Opp 탭 (크롬 확장에서 이식) ────────────────────────────────── */
+.opp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+}
+
+.opp-item {
+  background: var(--badge-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+}
+
+.opp-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.opp-desc {
+  color: var(--text-primary);
+  font-weight: 500;
+  font-size: 11.5px;
+  line-height: 1.3;
+}
+
+.opp-label {
+  color: var(--text-muted);
+  font-size: 10.5px;
+  min-width: 40px;
+}
+
+.opp-id-link {
+  color: var(--brand);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.opp-id-link:hover {
+  text-decoration: underline;
+}
+
+.opp-badge {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.opp-type-cloud   { background: #dbeafe; color: #1d4ed8; }
+.opp-type-onprem  { background: #fef3c7; color: #92400e; }
+.opp-type-service { background: #d1fae5; color: #065f46; }
+
+/* ── Downtime 탭 (크롬 확장에서 이식) ─────────────────────────────── */
+.downtime-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.downtime-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border-color, #d9d9d9);
+  border-radius: 14px;
+  background: var(--panel-bg, #fff);
+  color: var(--text-color, #222);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.downtime-chip.static { cursor: default; }
+.downtime-chip:not(.static):hover { background: var(--badge-bg, #eef2ff); }
+.downtime-chip .dc-count {
+  font-weight: 600;
+  background: var(--badge-bg, #eef2ff);
+  border-radius: 9px;
+  padding: 0 6px;
+  min-width: 18px;
+  text-align: center;
+}
+.downtime-chip.active {
+  background: #0a6ed1;
+  border-color: #0a6ed1;
+  color: #fff;
+}
+.downtime-chip.active .dc-count { background: rgba(255,255,255,0.25); color: #fff; }
+.downtime-chip.tone-warn:not(.active) .dc-count { color: #c2185b; }
+
+.downtime-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.downtime-info { font-size: 12px; color: var(--text-muted, #666); }
+.downtime-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: #0a6ed1;
+  color: #fff;
+  cursor: pointer;
+  font-weight: 600;
+}
+.downtime-badge .dt-x { opacity: 0.85; }
+.downtime-badge:hover .dt-x { opacity: 1; }
+.downtime-info .dt-count { margin-left: 6px; }
+.downtime-copy {
+  border: 1px solid var(--border-color, #d9d9d9);
+  border-radius: 6px;
+  background: var(--panel-bg, #fff);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 4px 8px;
+}
+.downtime-copy:hover { background: var(--badge-bg, #eef2ff); }
