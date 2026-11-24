@@ -4601,6 +4601,51 @@ window.CSMSession.registerSystem({
   },
 });
 
+// ── reporting(Cloud Reporting, royalty) 세션 등록 ─────────────────────────
+// 🚧 모바일 보류(2026-11): 아이폰에서 reporting.ondemand.com 접속 자체가 현재 불가(네트워크/서버 쪽,
+//   코드 무관)라 royalty 조회를 호출부에서 주석 처리해 둠. 이 등록/probe 는 복구 시 재사용하도록 보존.
+// reporting.ondemand.com 은 ONE360 와 별개 도메인·별개 세션(쿠키 SAP_SESSIONID_RZA_002 + sap-usercontext).
+//   확장 popup fetch(credentials:'include')는 Safari 공유 쿠키에 의존 → 세션 없으면 ensureSession('reporting')
+//   이 활성 탭을 reporting 로그인 경로로 redirect 해 세션을 만든다(one360/itsm 과 동일 방식).
+window.CSMSession.registerSystem({
+  key: 'reporting',
+  // reporting 메인 조회 경로. 세션 있으면 Royalties Report, 없으면 Login 페이지를 준다(맥북 실측).
+  loginUrl: 'https://reporting.ondemand.com/sap/crp/cdo',
+  // 자기(reporting) + 상대(one360/itsm) + 공유 IdP 를 인식해 그 탭들을 안 뺏도록(상호 조정).
+  ssoDomainsRe: window.CSMSession.makeSsoDomainsRe(['reporting\\.ondemand\\.com', 'one360\\.for\\.sap', 'itsm\\.services\\.sap']),
+  needsToken: false, // ONE360처럼 쿠키만(토큰 없음) — probe-ok 낙관 캐시 TTL 공유.
+  // 🚨 reporting 세션 판정은 content-type 으로 못 한다(인증/미인증 모두 200+text/html, 실측). 구분자는
+  //   응답 HTML 의 <title> — 미인증=Login / 인증=Royalties Report. probe 는 5초 타임아웃(세션 없으면
+  //   응답이 영영 안 와 probing 에서 블록되는 것 방지) → title 로 valid/invalid 판정.
+  probe: async (cfg) => {
+    let r;
+    const pc = new AbortController();
+    const pt = setTimeout(() => pc.abort(), 5000);
+    try {
+      r = await fetch('https://reporting.ondemand.com/sap/crp/cdo?type=CRP_HCP&list=162', {
+        method: 'GET', credentials: 'include', redirect: 'manual', signal: pc.signal,
+      });
+    } catch (_) {
+      cfg.token.value = null; cfg.token.expiry = 0;
+      return { state: 'invalid' }; // abort/네트워크 → 세션없음 취급 → redirect 유도
+    } finally {
+      clearTimeout(pt);
+    }
+    // opaqueredirect / status 0 / 3xx = 로그인 리다이렉트(세션없음).
+    if (r.type === 'opaqueredirect' || r.status === 0 || (r.status >= 300 && r.status < 400)) {
+      cfg.token.value = null; cfg.token.expiry = 0; return { state: 'login-redirect' };
+    }
+    // 200 계열이면 body <title> 로 판정(reporting 전용). HTML 못 읽으면 보수적으로 invalid.
+    let title = '';
+    try { const html = await r.text(); title = (html.match(/<title>([^<]*)<\/title>/i) || [])[1] || ''; }
+    catch (_) { title = ''; }
+    const authed = r.status >= 200 && r.status < 300 && title && !/login/i.test(title);
+    if (authed) { cfg.token.value = 'probe-ok'; cfg.token.expiry = Date.now() + window.CSMSession.PROBE_OK_TTL_MS; return { state: 'valid' }; }
+    cfg.token.value = null; cfg.token.expiry = 0;
+    return { state: 'invalid' }; // title=Login 또는 미상 → 세션없음 → redirect 유도
+  },
+});
+
 // datablock fetch 1회. 상태코드/Response를 그대로 돌려줌(판정은 상위 one360Fetch).
 async function one360FetchOnce(dbId, payload, host, version) {
   const url = `https://${host}/api/datablocks/v1/apps/${ONE360_APP_ID}/datablocks/${dbId}/fetch-data?version=${version}`;
@@ -4791,16 +4836,18 @@ async function one360GetConsumptionTrend(accountId, saId, metricId) {
 
 // ONE360 Cloud Reporting royalty(CPEA/BTPEA/PAYGO) — subscription datablock에 없는 사용량기반 소비.
 //   reporting.ondemand.com/sap/crp/cdo 에서 Royalties.xlsx 를 직접 GET(credentials:'include')한다.
-//   Safari는 Cookie 헤더 수동 설정이 불가·금지라, ONE360과 동일하게 브라우저 자동 첨부에 의존.
-//   reporting 세션은 ONE360 SSO를 공유하므로 ensureSession('one360')으로 먼저 세션을 깨워 쿠키를 살린다.
 //   파싱·집계는 window.RoyaltyCore(= claude-scripts one360-cloud-reporting.js SSOT 포팅, popup.html 로드).
+//   🚧 모바일 보류(2026-11): 아이폰에서 reporting.ondemand.com 접속 자체가 불가(네트워크/서버 쪽,
+//   코드 무관)해 호출부(loadConsumption)에서 이 함수 호출을 주석 처리해 둠. reporting 이 복구되면
+//   그 주석을 해제해 재개한다. 이 함수 자체는 복구 시 그대로 쓰도록 보존(검증된 로직).
 //   실패해도 {ok:false, reason}만 반환 — Consumption 의 subscription 섹션은 독립적으로 표시된다.
 async function one360GetRoyalty(crmId, months = 6) {
   if (typeof window.RoyaltyCore === 'undefined' || typeof window.XLSX === 'undefined') {
     return { ok: false, reason: 'XLSX_NOT_LOADED' };
   }
-  // reporting 쿠키는 ONE360 SSO 공유 — one360 세션을 먼저 확보해 reporting 쿠키를 갱신.
-  try { await window.CSMSession.ensureSession('one360'); } catch (_) { /* 실패해도 기존 쿠키로 시도 */ }
+  // reporting 세션 확보: 없으면 ensureSession('reporting')이 활성 탭을 reporting 으로 redirect 해
+  //   로그인(SSO)을 시킨 뒤 쿠키를 만든다. one360/itsm 과 동일한 방식.
+  try { await window.CSMSession.ensureSession('reporting'); } catch (_) { /* 실패해도 기존 쿠키로 시도 */ }
   const { dateFrom, dateEnd } = window.RoyaltyCore.monthRangeToDates(months);
   const crm = window.RoyaltyCore.padCrm(crmId);
   const params = new URLSearchParams({
@@ -4810,13 +4857,18 @@ async function one360GetRoyalty(crmId, months = 6) {
   });
   const url = `https://reporting.ondemand.com/sap/crp/cdo?${params.toString()}`;
   let r;
+  // 타임아웃: 서버가 느려도 UI 가 안 막히게 15초 상한.
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 15000);
   try {
-    r = await fetch(url, { method: 'GET', credentials: 'include', redirect: 'manual' });
+    r = await fetch(url, { method: 'GET', credentials: 'include', signal: ctrl.signal });
   } catch (e) {
-    return { ok: false, reason: `NETWORK_${e.message}` };
+    return { ok: false, reason: ctrl.signal.aborted ? 'TIMEOUT' : `NETWORK_${e.message}` };
+  } finally {
+    clearTimeout(timer);
   }
-  if (!r.ok) return { ok: false, reason: `HTTP_${r.status}` };
   const ct = r.headers && r.headers.get ? r.headers.get('content-type') : null;
+  if (!r.ok) return { ok: false, reason: `HTTP_${r.status}` };
   if (ct && /text\/html/i.test(ct)) return { ok: false, reason: 'AUTH_HTML_LOGIN' };
   let agg;
   try {
@@ -6188,17 +6240,26 @@ async function loadConsumption() {
       }));
       if (isStale()) return;
 
-      // Cloud Reporting royalty(CPEA/BTPEA/PAYGO) — subscription과 별개 소스. 실패해도 격리.
-      let usageBased = { ok: false, reason: 'NOT_FETCHED' };
-      if (!isStale()) {
-        try {
-          const rr = await one360GetRoyalty(_crmId, 6);
-          if (rr) usageBased = rr;
-        } catch (_) { /* royalty 실패 격리 */ }
-      }
+      // royalty(Cloud Reporting, CPEA/BTPEA/PAYGO) — subscription 과 별개 소스.
+      //   🚧 모바일 보류: 아이폰에서 reporting.ondemand.com 접속 자체가 현재 불가(네트워크/서버 쪽,
+      //   코드 무관). reporting 이 복구되면 아래 비동기 조회 블록 주석을 해제해 재개한다.
+      //   그때까지 royalty 영역엔 "모바일 조회 불가" 안내만 표시(usageBased.reason='MOBILE_UNAVAILABLE').
+      _consumptionAll = { rows, accountId, guId, crmId: _crmId, trendByMetric, usageBased: { ok: false, reason: 'MOBILE_UNAVAILABLE' } };
       if (isStale()) return;
+      renderConsumption(); // subscription/trend 표시
 
-      _consumptionAll = { rows, accountId, guId, crmId: _crmId, trendByMetric, usageBased };
+      /* === reporting 복구 시 재개: 아래 주석 해제 ===
+      one360GetRoyalty(_crmId, 6).then(rr => {
+        if (!_consumptionAll || _consumptionAll.crmId !== _crmId) return; // 그새 다른 고객으로 교체됨
+        _consumptionAll.usageBased = rr || { ok: false, reason: 'NOT_FETCHED' };
+        if (!isStale()) renderConsumption();
+      }).catch(() => {
+        if (!_consumptionAll || _consumptionAll.crmId !== _crmId) return;
+        _consumptionAll.usageBased = { ok: false, reason: 'ERROR' };
+        if (!isStale()) renderConsumption();
+      });
+      === reporting 복구 시 재개 끝 === */
+      return;
     }
     if (isStale()) return;
     renderConsumption();
@@ -6310,6 +6371,8 @@ function renderConsumption() {
 
   // Usage-based (CPEA/BTPEA/PAYGO) royalty 섹션 — subscription 섹션 뒤에 append. BTP 선택 시만.
   appendUsageBasedSection(sections, _consumptionAll.usageBased, activeSaNames);
+  // 🔧 진단(임시): royalty가 실패/빈 경우 사유를 한 줄로 노출(아이폰 콘솔을 못 보므로 화면에서 확인).
+  appendRoyaltyDiag(sections, _consumptionAll.usageBased, activeSaNames);
 
   resetRootPanel('consumption', `${_selectedAccount.name} — Consumption`, sections);
 }
@@ -6346,6 +6409,24 @@ function appendUsageBasedSection(sections, ub, activeSaNames) {
       })) },
       { kind: 'text', text: `${latestMonth} 합계(청구 소비) ${fmtEur(monthTotal)}${moreTxt}` }
     ]
+  });
+}
+
+// royalty(Cloud Reporting) 안내 섹션. BTP 범위이고 royalty 데이터가 없을 때만 표시.
+//   🚧 현재 모바일에서는 reporting.ondemand.com 접속이 불가(네트워크/서버 쪽)해 royalty 조회를
+//   보류 중이다(loadConsumption 의 one360GetRoyalty 호출 주석 처리). 복구되면 재개 → 이 안내 대신
+//   실제 usage 섹션이 뜬다. ok+rows 가 있으면(재개 후) 안내를 띄우지 않는다.
+function appendRoyaltyDiag(sections, ub, activeSaNames) {
+  const anySelected = activeSaNames && (activeSaNames.bdc || activeSaNames.btp || activeSaNames.other);
+  if (anySelected && !activeSaNames.btp) return; // BTP 범위 아니면 대상 아님
+  if (ub && ub.ok && Array.isArray(ub.rows) && ub.rows.length) return; // 정상 데이터면 안내 불필요
+  sections.push({
+    title: '사용량 — BTP (Cloud Reporting)',
+    group: 'consumption',
+    sa: 'BTP',
+    blocks: [
+      { kind: 'text', text: '모바일에서는 royalty(CPEA/BTPEA/PAYGO) 조회가 현재 지원되지 않습니다. PC(크롬 확장)에서 확인해 주세요.' },
+    ],
   });
 }
 

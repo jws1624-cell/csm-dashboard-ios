@@ -12,6 +12,8 @@ function makeSsoDomainsRe(domains) {
 // 실제 등록과 동일: ITSM = [itsm, one360], ONE360 = [one360, itsm]
 const ITSM_RE = makeSsoDomainsRe(['itsm\\.services\\.sap', 'one360\\.for\\.sap']);
 const ONE360_RE = makeSsoDomainsRe(['one360\\.for\\.sap', 'itsm\\.services\\.sap']);
+// reporting(Cloud Reporting, royalty) = [reporting, one360, itsm] — 별개 도메인 세션. iOS royalty용.
+const REPORTING_RE = makeSsoDomainsRe(['reporting\\.ondemand\\.com', 'one360\\.for\\.sap', 'itsm\\.services\\.sap']);
 
 // ── init-session.js 복제: acquireRedirect의 3-상태 판정 ──
 // 'skip-idp'   = 활성 탭이 IdP(OAuth code 교환 진행 중) → redirect 생략(code invalid 방지), 짧게만 대기.
@@ -112,6 +114,24 @@ async function test(name, fn) { await fn(); pass++; console.log('  ✓', name); 
   await test('ONE360 re가 one360.for.sap → true', () => assert.strictEqual(ONE360_RE.test('https://one360.for.sap/app'), true));
   await test('ONE360 re가 itsm.services.sap → true(상대 도메인 인식)', () => assert.strictEqual(ONE360_RE.test('https://itsm.services.sap/now'), true));
   await test('ONE360 re가 google → false', () => assert.strictEqual(ONE360_RE.test('https://www.google.com'), false));
+
+  console.log('reporting(royalty) ssoDomainsRe + probe 판정 (iOS royalty 세션 등록 회귀방지):');
+  // 자기(reporting) + 상대(one360/itsm) + 공유 IdP 를 인식해, 그 탭들을 뺏지 않아야(상호 조정).
+  await test('REPORTING re가 reporting.ondemand.com → true', () => assert.strictEqual(REPORTING_RE.test('https://reporting.ondemand.com/sap/crp/cdo'), true));
+  await test('REPORTING re가 one360.for.sap → true(상대 도메인 인식)', () => assert.strictEqual(REPORTING_RE.test('https://one360.for.sap/app'), true));
+  await test('REPORTING re가 itsm.services.sap → true(상대 도메인 인식)', () => assert.strictEqual(REPORTING_RE.test('https://itsm.services.sap/now'), true));
+  await test('REPORTING re가 accounts.sap.com(공유 IdP) → true', () => assert.strictEqual(REPORTING_RE.test('https://accounts.sap.com/x'), true));
+  await test('REPORTING re가 google → false', () => assert.strictEqual(REPORTING_RE.test('https://www.google.com'), false));
+  // reporting probe = 같은 classifyProbe 재사용: 미인증은 로그인 HTML / 302 / opaqueredirect, 인증은 비-HTML.
+  await test('reporting 미인증 302 → login-redirect(=redirect 발동)', () => assert.strictEqual(classifyProbe({ status: 302 }), 'login-redirect'));
+  await test('reporting 미인증 opaqueredirect → login-redirect', () => assert.strictEqual(classifyProbe({ status: 0, type: 'opaqueredirect' }), 'login-redirect'));
+  await test('reporting 미인증 200+text/html(로그인) → invalid', () => assert.strictEqual(classifyProbe({ status: 200, contentType: 'text/html; charset=utf-8' }), 'invalid'));
+  await test('reporting 인증 200+xlsx(비-HTML) → valid', () => assert.strictEqual(classifyProbe({ status: 200, contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), 'valid'));
+  // one360 세션은 reporting redirect에 뺏기면 안 됨: 활성 탭이 one360면 reporting 확보는 redirect 아님… 은
+  // acquireRedirect가 아니라 호출 순서(one360 먼저)로 보장되지만, 적어도 one360 탭이 reporting re에 "상대 도메인"으로 인식돼
+  // IdP 아님(redirected)으로 판정되는지(갇힘 방지)만 확인.
+  await test('reporting 확보 중 활성탭=one360 → redirected(IdP 아니므로, 갇힘 방지)', () =>
+    assert.strictEqual(decideRedirect('https://one360.for.sap/app'), 'redirected'));
 
   console.log('decideRedirect (3-상태: IdP 생략 / 실제 redirect / 탭없음):');
   await test('활성탭=XSUAA IdP(OAuth 진행중) → skip-idp', () =>
