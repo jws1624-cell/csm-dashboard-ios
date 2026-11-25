@@ -6241,14 +6241,13 @@ async function loadConsumption() {
       if (isStale()) return;
 
       // royalty(Cloud Reporting, CPEA/BTPEA/PAYGO) — subscription 과 별개 소스.
-      //   🚧 모바일 보류: 아이폰에서 reporting.ondemand.com 접속 자체가 현재 불가(네트워크/서버 쪽,
-      //   코드 무관). reporting 이 복구되면 아래 비동기 조회 블록 주석을 해제해 재개한다.
-      //   그때까지 royalty 영역엔 "모바일 조회 불가" 안내만 표시(usageBased.reason='MOBILE_UNAVAILABLE').
-      _consumptionAll = { rows, accountId, guId, crmId: _crmId, trendByMetric, usageBased: { ok: false, reason: 'MOBILE_UNAVAILABLE' } };
+      //   reporting.ondemand.com 은 사내망 전용 → 사내 VPN 연결 시 조회된다. 미접속이면
+      //   쿠키 없음/HTTP/로그인HTML 로 실패하고, 그때 appendRoyaltyDiag 가 "VPN 연결 필요" 안내를 띄운다.
+      //   (과거 '모바일 조회 불가'로 영구 보류했으나, 원인이 VPN 미접속임이 확인돼 기능 복구.)
+      _consumptionAll = { rows, accountId, guId, crmId: _crmId, trendByMetric, usageBased: { ok: false, reason: 'NOT_FETCHED' } };
       if (isStale()) return;
-      renderConsumption(); // subscription/trend 표시
+      renderConsumption(); // subscription/trend 먼저 표시(royalty 는 비동기로 뒤이어 갱신)
 
-      /* === reporting 복구 시 재개: 아래 주석 해제 ===
       one360GetRoyalty(_crmId, 6).then(rr => {
         if (!_consumptionAll || _consumptionAll.crmId !== _crmId) return; // 그새 다른 고객으로 교체됨
         _consumptionAll.usageBased = rr || { ok: false, reason: 'NOT_FETCHED' };
@@ -6258,7 +6257,6 @@ async function loadConsumption() {
         _consumptionAll.usageBased = { ok: false, reason: 'ERROR' };
         if (!isStale()) renderConsumption();
       });
-      === reporting 복구 시 재개 끝 === */
       return;
     }
     if (isStale()) return;
@@ -6412,22 +6410,41 @@ function appendUsageBasedSection(sections, ub, activeSaNames) {
   });
 }
 
-// royalty(Cloud Reporting) 안내 섹션. BTP 범위이고 royalty 데이터가 없을 때만 표시.
-//   🚧 현재 모바일에서는 reporting.ondemand.com 접속이 불가(네트워크/서버 쪽)해 royalty 조회를
-//   보류 중이다(loadConsumption 의 one360GetRoyalty 호출 주석 처리). 복구되면 재개 → 이 안내 대신
-//   실제 usage 섹션이 뜬다. ok+rows 가 있으면(재개 후) 안내를 띄우지 않는다.
+// royalty(Cloud Reporting) 안내 섹션. BTP 범위이고 royalty 데이터가 없을 때 표시.
+//   reporting.ondemand.com 은 사내망 전용이라, 실패의 가장 흔한 원인은 사내 VPN 미접속이다.
+//   → 조용히 사라지지 않고 "사내 VPN 연결 필요" 안내를 띄운다(reason 별 구분).
+//   ok+rows 가 있으면(VPN 연결·조회 성공) 안내 대신 appendUsageBasedSection 이 실제 데이터를 그린다.
 function appendRoyaltyDiag(sections, ub, activeSaNames) {
   const anySelected = activeSaNames && (activeSaNames.bdc || activeSaNames.btp || activeSaNames.other);
   if (anySelected && !activeSaNames.btp) return; // BTP 범위 아니면 대상 아님
-  if (ub && ub.ok && Array.isArray(ub.rows) && ub.rows.length) return; // 정상 데이터면 안내 불필요
+  if (ub && ub.ok && Array.isArray(ub.rows) && ub.rows.length) return; // 정상 데이터면 안내 불필요(실데이터가 뜸)
   sections.push({
     title: '사용량 — BTP (Cloud Reporting)',
     group: 'consumption',
     sa: 'BTP',
     blocks: [
-      { kind: 'text', text: '모바일에서는 royalty(CPEA/BTPEA/PAYGO) 조회가 현재 지원되지 않습니다. PC(크롬 확장)에서 확인해 주세요.' },
+      { kind: 'text', text: royaltyFailHint(ub && ub.reason) },
     ],
   });
+}
+
+// royalty 실패 reason → 사용자 안내 문구. reporting.ondemand.com 은 사내망 전용이라
+//   가장 흔한 원인은 VPN 미접속(쿠키 없음/차단/로그인HTML). reason 별로 살짝 구분.
+//   (csm-dashboard-ext/sidepanel.js royaltyFailHint 와 동일 — 수정 시 양쪽을 함께 바꾼다.)
+function royaltyFailHint(reason) {
+  const r = String(reason || '');
+  const vpn = '⚠️ BTP royalty(CPEA/BTPEA/PAYGO) 조회에 실패했습니다. 이 데이터는 사내망 전용(reporting.ondemand.com)이라 사내 VPN 연결이 필요합니다. VPN 연결 후 다시 조회해 주세요.';
+  if (r === 'NO_REPORTING_COOKIE' || r === 'AUTH_HTML_LOGIN') {
+    return vpn + ' (reporting.ondemand.com 로그인 세션이 없습니다 — VPN 연결 후 해당 사이트 로그인 필요)';
+  }
+  if (r.indexOf('HTTP_') === 0 || r === 'NOT_FETCHED' || r === 'ERROR' || r === 'TIMEOUT'
+      || r.indexOf('NETWORK_') === 0 || r.indexOf('PARSE_') === 0) {
+    return vpn + ` (${r})`;
+  }
+  if (r === 'XLSX_NOT_LOADED') {
+    return '⚠️ BTP royalty 조회 모듈 로드에 실패했습니다. 사이드패널을 새로고침해 주세요.';
+  }
+  return vpn + (r ? ` (${r})` : '');
 }
 
 // 트렌드 캐시 엔트리 → 최신월 { used, sub }. (No_Utilized_Max_ / No_Entitled_Max_)
