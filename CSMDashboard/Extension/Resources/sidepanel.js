@@ -6280,8 +6280,11 @@ function renderConsumption() {
 
   if (!metrics.length) {
     // subscription 메트릭이 없어도 royalty(CPEA/BTPEA/PAYGO)는 따로 있을 수 있음 → royalty만 표시.
+    //   SA 필터를 BTP만으로 바꾼 경우가 이 경로 → appendRoyaltyDiag 를 함께 불러야
+    //   royalty 실패 시에도 '빈 화면'이 아니라 'VPN 연결 필요' 안내가 뜬다(정상 render 경로와 동일).
     const onlyRoyalty = [];
     appendUsageBasedSection(onlyRoyalty, _consumptionAll.usageBased, activeSaNames);
+    appendRoyaltyDiag(onlyRoyalty, _consumptionAll.usageBased, activeSaNames);
     if (onlyRoyalty.length) {
       resetRootPanel('consumption', `${_selectedAccount.name} — Consumption`, onlyRoyalty);
     } else {
